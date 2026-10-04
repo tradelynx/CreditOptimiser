@@ -10,6 +10,8 @@ goes. It runs each task on the cheapest setup that will still do it well, and te
 > **Individual experiences may vary.** Savings and cost figures are estimates. How much you
 > save depends on your tasks, your repositories and how you work.
 
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support%20this%20project-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/prismprints)
+
 ---
 
 ## What it does
@@ -330,6 +332,12 @@ python3 -m unittest discover -s tests
 
 The tests run automatically on macOS, Linux and Windows for every push (GitHub Actions).
 Issues and pull requests are welcome.
+
+## Support
+
+CreditOptimiser is free. If it saves you credit and you'd like to say thanks, you can
+[buy me a coffee](https://buymeacoffee.com/prismprints). It's entirely optional, and very
+much appreciated.
 
 ## Licence
 
