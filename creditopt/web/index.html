@@ -175,6 +175,7 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
 .cmp-row .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .cmp-note { grid-column: 2 / 4; font-size: 12px; color: var(--muted); margin-top: -4px; }
 @media (max-width: 640px) { .cmp-row { grid-template-columns: 1fr 64px; } .cmp-row .cmp-track { grid-column: 1 / 3; grid-row: 2; } .cmp-note { grid-column: 1 / 3; } }
+.site-foot { max-width: 1180px; margin: 0 auto; padding: 8px 24px 32px; color: var(--muted); font-size: 12px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -205,7 +206,7 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
         <button data-days="90">90 days</button>
         <button data-days="0">All</button>
       </div>
-      <span class="note">Figures are API-equivalent cost. On Pro/Max you don't pay these, but your usage limits scale with the same compute.</span>
+      <span class="note">Figures are API-equivalent cost. On Pro/Max you don't pay these, but your usage limits scale with the same compute. <span id="prices-date"></span></span>
     </div>
     <div class="tiles" id="tiles"></div>
     <div class="card" style="margin-bottom:20px">
@@ -344,6 +345,10 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
     </div>
   </section>
 </main>
+<footer class="site-foot">
+  CreditOptimiser is an independent, unofficial tool. It is not made, endorsed or supported by Anthropic.
+  Savings and cost figures are estimates; individual experiences may vary.
+</footer>
 <div class="tip" id="tip" role="tooltip"></div>
 <script>
 const FAMILIES = ["opus", "sonnet", "haiku", "fable", "other"];
@@ -412,6 +417,7 @@ function render() {
     : "No Claude Code usage found in this period");
   renderRepoPicker();
   renderRunWhere();
+  $("#prices-date").textContent = `Prices checked ${new Date(DATA.prices_checked + "T12:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}.`;
   renderTiles(t); renderRecs(); renderDaily(); renderShares(); renderSessions(); renderSetup();
 }
 
@@ -558,8 +564,10 @@ $("#rescan").addEventListener("click", async () => {
 });
 
 function renderSetup() {
-  const q = REPO ? ` --repo '${REPO.replace(/'/g, "'\\''")}'` : "";
-  $("#install-cmd").textContent = `python3 -m creditopt install${q} --apply`;
+  const win = DATA.platform.os === "windows";
+  const quoted = win ? `"${REPO}"` : `'${REPO.replace(/'/g, "'\\''")}'`;
+  const q = REPO ? ` --repo ${quoted}` : "";
+  $("#install-cmd").textContent = `${DATA.platform.python} -m creditopt install${q} --apply`;
   const name = REPO ? REPO.split(/[\\/]/).filter(Boolean).pop() : "";
   $("#install-btn").textContent = REPO ? `Install for ${name}` : "Install for all repositories";
   $("#uninstall-btn").textContent = REPO ? `Remove from ${name}` : "Remove from all repositories";
@@ -711,7 +719,7 @@ function renderComparison(c) {
       <span class="v">${r.feasible === false ? "n/a" : money(r.cost)}</span>
       ${r.note ? `<span class="cmp-note">${esc(r.note)}</span>` : ""}</div>`).join("")}
     ${c.rows[0].by_model && Object.keys(c.rows[0].by_model).length > 1 ? `<div class="legend" style="margin-top:8px">${FAMILIES.filter(f => c.rows[0].by_model[f]).map(f => `<span><i style="background:${color(f)}"></i>${NAMES[f]} ${money(c.rows[0].by_model[f])}</span>`).join("")}</div>` : ""}
-    <p class="note">Alternatives are estimates: this run's actual tokens priced at each model's rates. A different model would have done a somewhat different amount of work. "Credits" on a subscription scale the same way as these API-equivalent prices.</p>
+    <p class="note">Alternatives are estimates: this run's actual tokens priced at each model's rates. A different model would have done a somewhat different amount of work, so individual results will vary. "Credits" on a subscription scale the same way as these API-equivalent prices.</p>
   </div>`;
 }
 
@@ -783,7 +791,7 @@ let FIRST_HISTORY = true, ACTIVE_TIMER = null;
 async function loadHistory() {
   const h = await (await fetch("/api/runs")).json();
   if (!OPTS) { PRESETS = h.presets; applyOpts(h.defaults); }
-  if (!h.claude) $("#run-msg").textContent = "The claude command wasn't found. Install Claude Code, or set claude_path in settings.";
+  if (!h.claude) $("#run-msg").textContent = `The claude command wasn't found. Install Claude Code, or tell CreditOptimiser where it is: ${DATA ? DATA.platform.python : "python3"} -m creditopt config --set claude_path=/full/path/to/claude`;
   // Reconnect to a run that was going before this page loaded.
   if (FIRST_HISTORY && h.active.length && RUN_ID === null) attach(h.active[0].id);
   FIRST_HISTORY = false;

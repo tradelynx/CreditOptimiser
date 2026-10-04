@@ -1,4 +1,5 @@
 import json
+import sys
 import time
 import tempfile
 import unittest
@@ -175,17 +176,17 @@ class InstallerTest(unittest.TestCase):
     def test_apply_is_idempotent_and_preserves_settings(self):
         with tempfile.TemporaryDirectory() as d:
             settings = Path(d) / "settings.json"
-            settings.write_text(json.dumps({"model": "sonnet", "statusLine": {"type": "command", "command": "mine"}}))
+            settings.write_text(json.dumps({"model": "sonnet", "statusLine": {"type": "command", "command": "mine"}}), encoding="utf-8")
             installer.apply(d)
             installer.apply(d)
-            data = json.loads(settings.read_text())
+            data = json.loads(settings.read_text(encoding="utf-8"))
             self.assertEqual(data["model"], "sonnet")
             self.assertEqual(data["statusLine"]["command"], "mine")
             self.assertEqual(len(data["hooks"]["UserPromptSubmit"]), 1)
             self.assertTrue((Path(d) / "agents" / "scout.md").exists())
             self.assertTrue(list(Path(d).glob("settings.json.*.bak")))
             installer.uninstall(d)
-            data = json.loads(settings.read_text())
+            data = json.loads(settings.read_text(encoding="utf-8"))
             self.assertNotIn("UserPromptSubmit", data.get("hooks", {}))
             self.assertEqual(data["statusLine"]["command"], "mine")
 
@@ -193,17 +194,46 @@ class InstallerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as repo:
             installer.apply(home, repo=repo)
             self.assertEqual(list(Path(home).iterdir()), [])
-            local = json.loads((Path(repo) / ".claude" / "settings.local.json").read_text())
+            local = json.loads((Path(repo) / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
             self.assertIn("UserPromptSubmit", local["hooks"])
             self.assertTrue((Path(repo) / ".claude" / "agents" / "runner.md").exists())
             self.assertFalse((Path(repo) / ".claude" / "settings.json").exists())
             installer.uninstall(home, repo=repo)
-            local = json.loads((Path(repo) / ".claude" / "settings.local.json").read_text())
+            local = json.loads((Path(repo) / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
             self.assertNotIn("UserPromptSubmit", local.get("hooks", {}))
 
     def test_repo_install_rejects_missing_folder(self):
         with self.assertRaises(FileNotFoundError):
             installer.apply(repo="/no/such/folder/anywhere")
+
+    def test_upgrades_old_command(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = "PYTHONPATH=/x python3 -m creditopt hook"
+            (Path(d) / "settings.json").write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+                {"hooks": [{"type": "command", "command": old}]}]},
+                "statusLine": {"type": "command", "command": "PYTHONPATH=/x python3 -m creditopt statusline"}}), encoding="utf-8")
+            installer.apply(d)
+            data = json.loads((Path(d) / "settings.json").read_text(encoding="utf-8"))
+            hooks = data["hooks"]["UserPromptSubmit"]
+            self.assertEqual(len(hooks), 1)
+            self.assertIn("run_creditopt.py", hooks[0]["hooks"][0]["command"])
+            self.assertIn("run_creditopt.py", data["statusLine"]["command"])
+
+    def test_hook_command_runs_from_anywhere(self):
+        """Run the installed command the way Claude Code would, in every shell it uses."""
+        import os, shutil, subprocess
+        cmd = installer._python_cmd("route") + " rename foo"
+        if os.name == "nt":  # Claude Code uses Git Bash if installed, else PowerShell
+            shells = [["powershell", "-NoProfile", "-Command", cmd]]
+            if shutil.which("bash"):
+                shells.append(["bash", "-c", cmd])
+        else:
+            shells = [["/bin/sh", "-c", cmd]]
+        for argv in shells:
+            out = subprocess.run(argv, cwd=tempfile.gettempdir(), capture_output=True,
+                                 text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(out.returncode, 0, f"{argv[0]}: {out.stderr}")
+            self.assertIn("Haiku", out.stdout, argv[0])
 
     def test_plan_does_not_write(self):
         with tempfile.TemporaryDirectory() as d:
@@ -261,7 +291,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_options(self):
         from creditopt import runner
-        (self.repo / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}))
+        (self.repo / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}), encoding="utf-8")
         task = "Add pagination to the orders endpoint"
         plan = runner.plan_run(task, str(self.repo))  # default preset: quality
         self.assertEqual(plan["test_command"], "npm test")
@@ -290,7 +320,7 @@ class RunnerTest(unittest.TestCase):
     def test_detect_test_command(self):
         from creditopt import runner
         self.assertEqual(runner.detect_test_command(str(self.repo)), "")
-        (self.repo / "go.mod").write_text("module x")
+        (self.repo / "go.mod").write_text("module x", encoding="utf-8")
         self.assertEqual(runner.detect_test_command(str(self.repo)), "go test ./...")
 
     def test_shell_permission_adds_verifier(self):
@@ -310,8 +340,8 @@ class RunnerTest(unittest.TestCase):
 
     def test_run_escalates_and_finishes(self):
         from creditopt import runner
-        fake = Path(self.tmp.name) / "claude"
-        fake.write_text(FAKE_CLAUDE)
+        fake = Path(self.tmp.name) / "claude.py"
+        fake.write_text(FAKE_CLAUDE, encoding="utf-8")
         fake.chmod(0o755)
         config.save({"claude_path": str(fake)})
         run = runner.start("rename foo to bar in a.py", str(self.repo))
@@ -353,7 +383,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_active_runs_listed_until_finished(self):
         from creditopt import runner
-        fake = Path(self.tmp.name) / "claude"
+        fake = Path(self.tmp.name) / "claude.py"
         fake.write_text(FAKE_CLAUDE.replace("import json, sys", "import json, sys, time\ntime.sleep(0.5)"))
         fake.chmod(0o755)
         config.save({"claude_path": str(fake)})
@@ -365,6 +395,19 @@ class RunnerTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertNotIn(run.id, [r["id"] for r in runner.active_runs()])
         self.assertEqual(runner.history()[0]["id"], run.id)
+
+    def test_launch_prefix(self):
+        from creditopt import runner
+        self.assertEqual(runner.launch_prefix("/usr/local/bin/claude"), ["/usr/local/bin/claude"])
+        self.assertEqual(runner.launch_prefix("x/claude.py")[0], sys.executable)
+        # An npm install on Windows: claude.cmd plus the real entry point beside it.
+        npm = Path(self.tmp.name) / "npm"
+        cli = npm / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+        cli.parent.mkdir(parents=True)
+        cli.write_text("", encoding="utf-8")
+        (npm / "node.exe").write_text("", encoding="utf-8")
+        with mock.patch("shutil.which", return_value=None):
+            self.assertEqual(runner.launch_prefix(str(npm / "claude.cmd")), [str(npm / "node.exe"), str(cli)])
 
     def test_start_validates(self):
         from creditopt import runner

@@ -8,6 +8,10 @@ the compute you consume, so API-equivalent cost is a good common currency for
 
 from dataclasses import dataclass
 
+# When the prices below were last checked against Anthropic's published API
+# pricing. Update this and the CATALOGUE together when prices change.
+PRICES_CHECKED = "2026-10-04"
+
 # Cache writes cost 1.25x input for the 5-minute TTL and 2x for the 1-hour TTL.
 CACHE_WRITE_5M = 1.25
 CACHE_WRITE_1H = 2.0

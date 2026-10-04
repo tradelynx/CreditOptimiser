@@ -128,6 +128,7 @@ def cmd_config(args):
 
 
 def main(argv=None):
+    config.utf8_console()
     p = argparse.ArgumentParser(prog="creditopt", description="Get more from your Claude subscription.")
     p.add_argument("--claude-dir", help="Claude Code config dir (default ~/.claude)")
     sub = p.add_subparsers(dest="cmd")

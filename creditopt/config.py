@@ -40,14 +40,32 @@ def repo_roots(cfg):
 
 
 def config_dir():
-    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
-    return Path(base) / "creditopt"
+    """~/.config/creditopt on macOS/Linux, %APPDATA%\\creditopt on Windows."""
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if not base and os.name == "nt":
+        base = os.environ.get("APPDATA")
+    return Path(base or Path.home() / ".config") / "creditopt"
+
+
+def python_command():
+    """How to call Python in a terminal on this OS (Windows rarely has `python3`)."""
+    return "python" if os.name == "nt" else "python3"
+
+
+def utf8_console():
+    """Let the console print the ▶ ● █ symbols we use, even on older Windows consoles."""
+    import sys
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 
 def load():
     cfg = dict(DEFAULTS)
     try:
-        cfg.update(json.loads((config_dir() / "config.json").read_text()))
+        cfg.update(json.loads((config_dir() / "config.json").read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
     return cfg
@@ -58,5 +76,5 @@ def save(updates):
     cfg.update({k: v for k, v in updates.items() if k in DEFAULTS})
     path = config_dir() / "config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg, indent=2))
+    path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return cfg

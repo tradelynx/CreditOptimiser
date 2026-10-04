@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -81,7 +82,7 @@ def shell_allowed(repo, claude_dir=None):
         files += [Path(repo) / ".claude" / "settings.json", Path(repo) / ".claude" / "settings.local.json"]
     for f in files:
         try:
-            allow = json.loads(f.read_text()).get("permissions", {}).get("allow", [])
+            allow = json.loads(f.read_text(encoding="utf-8")).get("permissions", {}).get("allow", [])
         except (OSError, ValueError, AttributeError):
             continue
         if any(str(rule).startswith("Bash") for rule in allow):
@@ -150,7 +151,7 @@ def detect_test_command(repo):
     """Best guess at a repo's test command, or '' if there's no obvious one."""
     root = Path(repo or ".")
     try:
-        pkg = json.loads((root / "package.json").read_text())
+        pkg = json.loads((root / "package.json").read_text(encoding="utf-8"))
         script = (pkg.get("scripts") or {}).get("test", "")
         if script and "no test specified" not in script:
             if (root / "pnpm-lock.yaml").exists():
@@ -166,16 +167,16 @@ def detect_test_command(repo):
         return "go test ./..."
     py = any((root / f).exists() for f in ("pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "tox.ini"))
     if (root / "pytest.ini").exists() or (root / "conftest.py").exists():
-        return "python3 -m pytest"
+        return f"{config.python_command()} -m pytest"
     try:
-        if "pytest" in (root / "pyproject.toml").read_text():
-            return "python3 -m pytest"
+        if "pytest" in (root / "pyproject.toml").read_text(encoding="utf-8"):
+            return f"{config.python_command()} -m pytest"
     except OSError:
         pass
     if (root / "tests").is_dir() and (py or any((root / "tests").glob("test_*.py"))):
-        return "python3 -m unittest discover -s tests"
+        return f"{config.python_command()} -m unittest discover -s tests"
     try:
-        if re.search(r"(?m)^test:", (root / "Makefile").read_text()):
+        if re.search(r"(?m)^test:", (root / "Makefile").read_text(encoding="utf-8")):
             return "make test"
     except OSError:
         pass
@@ -310,18 +311,47 @@ def plan_run(task, repo, model=None, options=None):
 
 
 def find_claude():
+    """Locate the claude command for whichever way Claude Code was installed."""
     cfg = config.load()
-    candidates = [cfg.get("claude_path"), shutil.which("claude"),
-                  str(Path.home() / ".claude" / "local" / "claude"),
-                  "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+    home = Path.home()
+    candidates = [cfg.get("claude_path"), shutil.which("claude")]
+    if os.name == "nt":
+        appdata = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+        candidates += [str(home / ".local" / "bin" / "claude.exe"),
+                       str(appdata / "npm" / "claude.cmd")]
+    else:
+        candidates += [str(home / ".local" / "bin" / "claude"),
+                       str(home / ".claude" / "local" / "claude"),
+                       "/opt/homebrew/bin/claude", "/usr/local/bin/claude", "/usr/bin/claude"]
     for c in candidates:
-        if c and Path(c).is_file() and os.access(c, os.X_OK):
+        if c and Path(c).is_file() and (os.name == "nt" or os.access(c, os.X_OK)):
             return c
     return None
 
 
+def launch_prefix(claude):
+    """argv prefix that starts Claude Code without going through a shell.
+
+    On Windows an npm install gives a claude.cmd shim. Batch files re-parse
+    their arguments through cmd.exe, which would mangle task text containing
+    quotes, & or |, so we call node with Claude Code's cli.js directly instead.
+    """
+    p = Path(claude)
+    if p.suffix.lower() == ".py":
+        return [sys.executable, claude]
+    if p.suffix.lower() in (".cmd", ".bat"):
+        pkg = p.parent / "node_modules" / "@anthropic-ai" / "claude-code"
+        if (pkg / "claude.exe").is_file():  # newer npm installs ship a native binary
+            return [str(pkg / "claude.exe")]
+        cli = pkg / "cli.js"
+        node = shutil.which("node") or str(p.parent / "node.exe")
+        if cli.is_file() and Path(node).is_file():
+            return [node, str(cli)]
+    return [claude]
+
+
 def build_command(plan, claude, prompt=None, resume=None, model=None):
-    cmd = [claude, "-p", prompt or plan["task"],
+    cmd = [*launch_prefix(claude), "-p", prompt or plan["task"],
            "--model", models.BY_KEY[model or plan["model"]].cli_alias,
            "--output-format", "stream-json", "--verbose",
            "--permission-mode", plan["permission_mode"],
@@ -457,9 +487,10 @@ def compare(run):
 
 def _attempt(run, cmd):
     """Run one claude process; return its result event (or None)."""
-    errfile = tempfile.TemporaryFile(mode="w+")
+    errfile = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
     run.proc = subprocess.Popen(cmd, cwd=run.plan["repo"], stdout=subprocess.PIPE,
-                                stderr=errfile, stdin=subprocess.DEVNULL, text=True, bufsize=1)
+                                stderr=errfile, stdin=subprocess.DEVNULL, text=True, bufsize=1,
+                                encoding="utf-8", errors="replace")
     result = None
     for line in run.proc.stdout:
         for ev in parse_event(line):
@@ -515,7 +546,7 @@ def _log(run):
     try:
         path = config.config_dir() / "runs.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as fh:
+        with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"id": run.id, "started": run.started, "state": run.state,
                                  "task": run.plan["task"][:300], "repo": run.plan["repo"],
                                  "model": run.plan["model"], "cost": run.cost,
@@ -534,8 +565,9 @@ def start(task, repo, model=None, options=None):
         raise ValueError("Pick a repository to run in.")
     claude = find_claude()
     if not claude:
-        raise ValueError("Couldn't find the `claude` command. Install Claude Code, or set "
-                         "claude_path in settings.")
+        raise ValueError("Couldn't find the `claude` command. Install Claude Code, or tell "
+                         "CreditOptimiser where it is: "
+                         f"{config.python_command()} -m creditopt config --set claude_path=/full/path/to/claude")
     run = Run(plan_run(task, repo, model, options))
     RUNS[run.id] = run
     threading.Thread(target=_execute, args=(run, claude), daemon=True).start()
@@ -553,7 +585,7 @@ def active_runs():
 def savings_summary():
     """Total saved by logged runs, compared with running each one all on Opus."""
     try:
-        lines = (config.config_dir() / "runs.jsonl").read_text().splitlines()
+        lines = (config.config_dir() / "runs.jsonl").read_text(encoding="utf-8").splitlines()
     except OSError:
         lines = []
     runs = actual = opus = 0
@@ -572,7 +604,7 @@ def savings_summary():
 
 def history(limit=20):
     try:
-        lines = (config.config_dir() / "runs.jsonl").read_text().splitlines()
+        lines = (config.config_dir() / "runs.jsonl").read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
     out = []

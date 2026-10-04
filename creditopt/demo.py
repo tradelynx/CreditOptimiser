@@ -86,5 +86,5 @@ def generate(target, days=30, seed=7):
                 line["cwd"] = project.replace("-", "/")
             folder = target / "projects" / project
             folder.mkdir(parents=True, exist_ok=True)
-            (folder / f"{sid}.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+            (folder / f"{sid}.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
     return target

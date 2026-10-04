@@ -158,10 +158,11 @@ def load_sessions(claude_dir=None, since=None):
 
 
 def _path_forms(path):
+    """Spellings of a path to compare by (case-insensitive on Windows)."""
     p = Path(path).expanduser()
-    forms = {os.path.normpath(os.path.abspath(p))}
+    forms = {os.path.normcase(os.path.normpath(os.path.abspath(p)))}
     try:
-        forms.add(str(p.resolve()))
+        forms.add(os.path.normcase(str(p.resolve())))
     except OSError:
         pass
     return forms

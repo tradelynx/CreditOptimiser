@@ -16,7 +16,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import analysis, config, discover, installer, router, runner
+import os
+import sys
+
+from . import analysis, config, discover, installer, models, router, runner
 from .transcripts import filter_repo, load_sessions, repositories
 
 WEB = Path(__file__).parent / "web"
@@ -42,6 +45,9 @@ def report(claude_dir=None, days=30, repo=None, rescan=False):
     data = analysis.build_report(filter_repo(sessions, repo), settings)
     data["config"] = cfg
     data["repo"] = repo or ""
+    data["platform"] = {"os": "windows" if os.name == "nt" else "mac" if sys.platform == "darwin" else "linux",
+                        "python": config.python_command()}
+    data["prices_checked"] = models.PRICES_CHECKED
     data["repositories"] = repository_list(sessions, cfg, rescan)
     data["install_plan"] = installer.plan(claude_dir, repo=repo)
     return data
@@ -104,7 +110,7 @@ def make_handler(claude_dir, token=None):
                 return self._send(403, {"error": "forbidden"})
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
-                page = (WEB / "index.html").read_text().replace(
+                page = (WEB / "index.html").read_text(encoding="utf-8").replace(
                     "</head>", f'<meta name="creditopt-token" content="{token}">\n</head>', 1)
                 return self._send(200, page.encode(), "text/html; charset=utf-8", PAGE_HEADERS)
             if not self._authorised():

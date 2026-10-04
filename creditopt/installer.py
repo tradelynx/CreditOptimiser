@@ -54,14 +54,33 @@ the risks, and a short ordered plan with file paths. Don't write code.
 }
 
 
+def _python_exe():
+    """A Python program name that runs in bash, zsh, Git Bash and PowerShell.
+
+    On Windows, Claude Code runs hooks through Git Bash if it's installed and
+    PowerShell otherwise. PowerShell won't run a quoted program path, so the
+    program must be unquoted: use the full path when it has no spaces, else
+    the `py` launcher or `python` from PATH.
+    """
+    exe = Path(sys.executable).as_posix()
+    if " " not in exe:
+        return exe
+    for name in (("py", "-3"), ("python",), ("python3",)):
+        if shutil.which(name[0]):
+            return " ".join(name)
+    return shlex.quote(exe)  # last resort: works in bash/zsh only
+
+
 def _python_cmd(sub):
-    return (f"PYTHONPATH={shlex.quote(str(ROOT))} {shlex.quote(sys.executable)} "
-            f"-m creditopt {sub}")
+    """Command Claude Code runs for the hook / status line, on any OS."""
+    launcher = (ROOT / "run_creditopt.py").as_posix()
+    return f'{_python_exe()} "{launcher}" {sub}'
+
 
 
 def _load_settings(path):
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
 
@@ -121,19 +140,25 @@ def apply(claude_dir=None, force_statusline=False, repo=None):
     for name, body in AGENTS.items():
         path = agents_dir / f"{name}.md"
         if not path.exists():
-            path.write_text(body)
+            path.write_text(body, encoding="utf-8")
 
     settings = _load_settings(settings_path)
     if settings_path.exists():
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         shutil.copy2(settings_path, settings_path.with_name(f"{settings_path.name}.{stamp}.bak"))
-    if not _has_our_hook(settings):
+    if _has_our_hook(settings):
+        # Upgrade an older install to the current, cross-platform command.
+        for group in settings["hooks"]["UserPromptSubmit"]:
+            for h in group.get("hooks", []):
+                if MARKER in h.get("command", ""):
+                    h["command"] = _python_cmd("hook")
+    else:
         settings.setdefault("hooks", {}).setdefault("UserPromptSubmit", []).append(
             {"hooks": [{"type": "command", "command": _python_cmd("hook"), "timeout": 10}]})
-    if steps[-1]["action"] == "set":
+    if steps[-1]["action"] == "set" or MARKER in settings.get("statusLine", {}).get("command", ""):
         settings["statusLine"] = {"type": "command", "command": _python_cmd("statusline")}
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return steps
 
 
@@ -155,5 +180,5 @@ def uninstall(claude_dir=None, repo=None):
     if MARKER in settings.get("statusLine", {}).get("command", ""):
         settings.pop("statusLine")
     if settings_path.exists():
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return [str(agents_dir / f"{n}.md") for n in AGENTS]

@@ -7,7 +7,8 @@ from pathlib import Path
 # Folders that never hold your own repos, or are too big to walk.
 SKIP = {"node_modules", "Library", "Applications", "Pictures", "Music", "Movies", "Photos",
         "venv", "env", "__pycache__", "vendor", "build", "dist", "target", "site-packages",
-        "Pods", "DerivedData", "go", "snap", "OneDrive", "Dropbox", "iCloud Drive"}
+        "Pods", "DerivedData", "go", "snap", "OneDrive", "Dropbox", "iCloud Drive",
+        "AppData", "Application Data", "Local Settings", "scoop"}
 
 
 def find_git_repos(roots, max_depth=4, time_budget=4.0, limit=500):

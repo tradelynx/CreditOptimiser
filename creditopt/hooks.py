@@ -31,7 +31,7 @@ def _state_file(session_id):
 
 def _load_state(session_id):
     try:
-        return json.loads(_state_file(session_id).read_text())
+        return json.loads(_state_file(session_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
@@ -40,7 +40,7 @@ def _save_state(session_id, state):
     try:
         path = _state_file(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state))
+        path.write_text(json.dumps(state), encoding="utf-8")
     except OSError:
         pass
 
