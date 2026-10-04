@@ -71,6 +71,11 @@ dependencies.
 
 ## Install
 
+> **No git?** Download the ZIP of the
+> [latest release](https://github.com/tradelynx/CreditOptimiser/releases/latest), unzip it,
+> and open a terminal in the unzipped folder. Then skip to [Start the dashboard](#start-the-dashboard).
+> Using git (below) makes updating easier.
+
 ### macOS
 
 1. Open **Terminal** (Applications → Utilities).
@@ -314,6 +319,9 @@ Read [SECURITY.md](SECURITY.md) before running tasks in repositories you don't f
 | Windows: the add-ons don't show up | Restart Claude Code. Claude Code runs add-ons through Git Bash (or PowerShell without Git for Windows); installing Git for Windows is the most reliable setup. If your Python path contains spaces, make sure `py` or `python` works in PowerShell. |
 
 ## Updating
+
+Check which version you have with `python3 -m creditopt --version`. See what's new in
+[CHANGELOG.md](CHANGELOG.md).
 
 ```bash
 cd ~/CreditOptimiser

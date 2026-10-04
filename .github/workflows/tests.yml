@@ -21,6 +21,7 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: CLI smoke test
         run: |
+          python -m creditopt --version
           python -m creditopt route "rename foo to bar in utils.py"
           python -m creditopt run --dry-run --repo . "Add pagination to the orders endpoint"
           python -m creditopt install --repo .

@@ -6,7 +6,7 @@ import time
 import json
 import sys
 
-from . import config, hooks, installer, router, runner, server
+from . import __version__, config, hooks, installer, router, runner, server
 
 
 def _money(x):
@@ -130,6 +130,7 @@ def cmd_config(args):
 def main(argv=None):
     config.utf8_console()
     p = argparse.ArgumentParser(prog="creditopt", description="Get more from your Claude subscription.")
+    p.add_argument("--version", action="version", version=f"CreditOptimiser {__version__}")
     p.add_argument("--claude-dir", help="Claude Code config dir (default ~/.claude)")
     sub = p.add_subparsers(dest="cmd")
 

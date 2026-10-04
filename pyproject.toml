@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "creditopt"
-version = "0.1.0"
+version = "1.0.0"
 description = "Get more from your Claude subscription: usage dashboard, model router, and auto-compaction nudges for Claude Code."
 requires-python = ">=3.9"
 readme = "README.md"
