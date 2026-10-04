@@ -81,7 +81,10 @@ def generate(target, days=30, seed=7):
                                 [6, 3, 0 if kind == "heavy" else 1.5, 0.4 if kind == "heavy" else 0])[0]
             start = date.replace(hour=rng.randint(8, 18)) if d else now - timedelta(hours=rng.randint(1, 6))
             sid, lines = make_session(kind, model, start, rng, idle_break=rng.random() < 0.15)
-            folder = target / "projects" / rng.choice(projects)
+            project = rng.choice(projects)
+            for line in lines:
+                line["cwd"] = project.replace("-", "/")
+            folder = target / "projects" / project
             folder.mkdir(parents=True, exist_ok=True)
             (folder / f"{sid}.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n")
     return target

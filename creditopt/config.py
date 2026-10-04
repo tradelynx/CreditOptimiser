@@ -10,7 +10,24 @@ DEFAULTS = {
     "idle_minutes": 60,          # prompt cache is cold after this long
     "block_over_budget": False,  # if true, the hook refuses prompts past the budget
     "route_nudges": True,        # suggest a cheaper model when the prompt is trivial
+    "repo_roots": [],            # folders to scan for git repos (empty = your home folder)
+    "scan_depth": 4,             # how many folders deep to look for repos
 }
+
+
+def coerce(key, value):
+    """Convert a user-supplied value to the type of the setting's default."""
+    default = DEFAULTS[key]
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else str(value).lower() in ("1", "true", "yes", "on")
+    if isinstance(default, list):
+        items = value if isinstance(value, list) else str(value).split(",")
+        return [str(v).strip() for v in items if str(v).strip()]
+    return type(default)(value)
+
+
+def repo_roots(cfg):
+    return cfg["repo_roots"] or [str(Path.home())]
 
 
 def config_dir():

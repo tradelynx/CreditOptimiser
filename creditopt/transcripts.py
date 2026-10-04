@@ -39,6 +39,7 @@ class Session:
     first_prompt: str = ""
     user_turns: int = 0
     compactions: int = 0
+    cwd: str = ""        # directory Claude Code was started in
 
 
 def _parse_ts(value):
@@ -125,6 +126,8 @@ def load_sessions(claude_dir=None, since=None):
             session = sessions.get(sid)
             if session is None:
                 session = sessions[sid] = Session(sid, project)
+            if not session.cwd and entry.get("cwd"):
+                session.cwd = entry["cwd"]
             kind = entry.get("type")
             if kind == "assistant":
                 msg = entry.get("message") or {}
@@ -146,7 +149,52 @@ def load_sessions(claude_dir=None, since=None):
                 session.compactions += 1
     for s in sessions.values():
         s.calls.sort(key=lambda c: c.timestamp)
+        if s.cwd:
+            # The real folder name beats the mangled transcript directory name.
+            s.project = Path(s.cwd).name or s.project
+            for c in s.calls:
+                c.project = s.project
     return {k: v for k, v in sessions.items() if v.calls}
+
+
+def _path_forms(path):
+    p = Path(path).expanduser()
+    forms = {os.path.normpath(os.path.abspath(p))}
+    try:
+        forms.add(str(p.resolve()))
+    except OSError:
+        pass
+    return forms
+
+
+def in_repo(session, repo):
+    """True if the session was started in `repo` or one of its subfolders."""
+    if not session.cwd:
+        return False
+    cwd_forms = _path_forms(session.cwd)
+    for root in _path_forms(repo):
+        for cwd in cwd_forms:
+            if cwd == root or cwd.startswith(root.rstrip(os.sep) + os.sep):
+                return True
+    return False
+
+
+def filter_repo(sessions, repo):
+    """Keep only the sessions that ran inside `repo` (no filter when repo is falsy)."""
+    if not repo:
+        return sessions
+    return {k: s for k, s in sessions.items() if in_repo(s, repo)}
+
+
+def repositories(sessions):
+    """Folders Claude Code has been used in, most-used first."""
+    from .analysis import call_cost
+    totals = {}
+    for s in sessions.values():
+        if s.cwd:
+            totals[s.cwd] = totals.get(s.cwd, 0.0) + sum(call_cost(c) for c in s.calls)
+    return [{"path": p, "name": Path(p).name or p, "cost": round(v, 2)}
+            for p, v in sorted(totals.items(), key=lambda kv: -kv[1])]
 
 
 def read_jsonl(path):

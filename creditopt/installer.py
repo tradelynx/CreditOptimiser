@@ -1,5 +1,7 @@
 """Wire CreditOptimiser into Claude Code: cost-aware subagents, the prompt hook and status line.
 
+Installs for all of Claude Code (~/.claude) or, with repo=..., for one repository only.
+
 Changes are planned first and only written with apply=True. settings.json is
 backed up before every write, and anything you've already configured is kept.
 """
@@ -72,17 +74,31 @@ def _has_our_hook(settings):
     return False
 
 
-def plan(claude_dir=None, force_statusline=False):
+def targets(claude_dir=None, repo=None):
+    """Where to write: (settings file, agents folder).
+
+    With a repo, everything goes in that repo's .claude/ folder, so it only
+    applies when Claude Code runs there. The hook lives in settings.local.json
+    (personal, not committed) because its command contains local paths.
+    """
+    if repo:
+        base = Path(repo).expanduser().resolve() / ".claude"
+        return base / "settings.local.json", base / "agents"
+    base = Path(claude_dir or default_claude_dir())
+    return base / "settings.json", base / "agents"
+
+
+def plan(claude_dir=None, force_statusline=False, repo=None):
     """List the changes `apply` would make, without touching anything."""
-    claude_dir = Path(claude_dir or default_claude_dir())
-    settings = _load_settings(claude_dir / "settings.json")
+    settings_path, agents_dir = targets(claude_dir, repo)
+    settings = _load_settings(settings_path)
     steps = []
     for name in AGENTS:
-        path = claude_dir / "agents" / f"{name}.md"
+        path = agents_dir / f"{name}.md"
         steps.append({"what": f"subagent '{name}'", "path": str(path),
                       "action": "skip (exists)" if path.exists() else "create"})
     steps.append({"what": "UserPromptSubmit context guard hook",
-                  "path": str(claude_dir / "settings.json"),
+                  "path": str(settings_path),
                   "action": "skip (installed)" if _has_our_hook(settings) else "add"})
     existing = settings.get("statusLine", {}).get("command", "")
     if MARKER in existing:
@@ -91,26 +107,26 @@ def plan(claude_dir=None, force_statusline=False):
         sl = "skip (you already have a status line; use --force-statusline to replace)"
     else:
         sl = "set"
-    steps.append({"what": "status line (context meter)", "path": str(claude_dir / "settings.json"),
+    steps.append({"what": "status line (context meter)", "path": str(settings_path),
                   "action": sl})
     return steps
 
 
-def apply(claude_dir=None, force_statusline=False):
-    claude_dir = Path(claude_dir or default_claude_dir())
-    steps = plan(claude_dir, force_statusline)
-    agents_dir = claude_dir / "agents"
+def apply(claude_dir=None, force_statusline=False, repo=None):
+    if repo and not Path(repo).expanduser().is_dir():
+        raise FileNotFoundError(f"no such folder: {repo}")
+    steps = plan(claude_dir, force_statusline, repo)
+    settings_path, agents_dir = targets(claude_dir, repo)
     agents_dir.mkdir(parents=True, exist_ok=True)
     for name, body in AGENTS.items():
         path = agents_dir / f"{name}.md"
         if not path.exists():
             path.write_text(body)
 
-    settings_path = claude_dir / "settings.json"
     settings = _load_settings(settings_path)
     if settings_path.exists():
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        shutil.copy2(settings_path, settings_path.with_name(f"settings.json.{stamp}.bak"))
+        shutil.copy2(settings_path, settings_path.with_name(f"{settings_path.name}.{stamp}.bak"))
     if not _has_our_hook(settings):
         settings.setdefault("hooks", {}).setdefault("UserPromptSubmit", []).append(
             {"hooks": [{"type": "command", "command": _python_cmd("hook"), "timeout": 10}]})
@@ -121,10 +137,9 @@ def apply(claude_dir=None, force_statusline=False):
     return steps
 
 
-def uninstall(claude_dir=None):
+def uninstall(claude_dir=None, repo=None):
     """Remove our hook and status line. Subagent files are left for you to delete."""
-    claude_dir = Path(claude_dir or default_claude_dir())
-    settings_path = claude_dir / "settings.json"
+    settings_path, agents_dir = targets(claude_dir, repo)
     settings = _load_settings(settings_path)
     groups = settings.get("hooks", {}).get("UserPromptSubmit", [])
     kept = []
@@ -141,4 +156,4 @@ def uninstall(claude_dir=None):
         settings.pop("statusLine")
     if settings_path.exists():
         settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-    return [str(claude_dir / "agents" / f"{n}.md") for n in AGENTS]
+    return [str(agents_dir / f"{n}.md") for n in AGENTS]

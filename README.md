@@ -19,6 +19,29 @@ creditopt install                # dry run: shows what it would add to Claude Co
 creditopt install --apply        # add the hook, status line and subagents
 ```
 
+## Choosing a repository
+
+The dashboard has a **repository dropdown** at the top. It lists the folders you've used
+Claude Code in (with their usage), then every other git repository it finds on your computer.
+By default it scans your home folder 4 levels deep; change that under **Setup → Settings**,
+or click **Rescan** after cloning something new.
+
+Picking a repository:
+- filters the dashboard to that repo's sessions only
+- points the **Setup** tab's Install/Remove buttons at that repo. Agents go in
+  `<repo>/.claude/agents/`, and the hook and status line go in
+  `<repo>/.claude/settings.local.json` (your personal settings file there, not committed),
+  so they only apply when Claude Code runs in that repo.
+
+The same works from the terminal (run these from the creditoptimiser folder):
+
+```bash
+python3 -m creditopt serve --repo ~/Code/shop          # open the dashboard on one repo
+python3 -m creditopt report --repo ~/Code/shop
+python3 -m creditopt install --repo ~/Code/shop --apply
+python3 -m creditopt config --set repo_roots="~/Code, ~/Work"
+```
+
 ## What it does
 
 ### 1. Dashboard (`creditopt serve`)
@@ -81,6 +104,8 @@ or existing agent files, and it backs up `settings.json` before writing.
 | `idle_minutes` | 60 | warn about a cold cache after this much idle time |
 | `block_over_budget` | false | hold the first prompt sent past the budget |
 | `route_nudges` | true | suggest a cheaper model for trivial prompts |
+| `repo_roots` | home folder | folders to scan for git repositories |
+| `scan_depth` | 4 | how many folders deep to scan |
 
 ## How the numbers work
 - Usage comes from the `usage` block of each API response in `~/.claude/projects/**/*.jsonl`,

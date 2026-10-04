@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from creditopt import analysis, config, demo, hooks, installer, models, router
-from creditopt.transcripts import load_sessions
+from creditopt import analysis, config, demo, discover, hooks, installer, models, router
+from creditopt.transcripts import Session, filter_repo, in_repo, load_sessions, repositories
 
 
 def write_transcript(folder, lines):
@@ -73,6 +73,42 @@ class AnalysisTest(unittest.TestCase):
             write_transcript(Path(d) / "projects" / "p", lines)
             s = load_sessions(d)["s1"]
             self.assertGreater(analysis.compaction_saving(s.calls, analysis.Settings()), 0)
+
+
+class RepoTest(unittest.TestCase):
+    def test_filter_by_repo(self):
+        with tempfile.TemporaryDirectory() as d:
+            demo.generate(d, days=10)
+            sessions = load_sessions(d)
+            only = filter_repo(sessions, "/home/dev/webshop")
+            self.assertTrue(only)
+            self.assertLess(len(only), len(sessions))
+            self.assertTrue(all(s.cwd == "/home/dev/webshop" and s.project == "webshop" for s in only.values()))
+            self.assertEqual(filter_repo(sessions, "/home/dev/web"), {})  # no prefix false-positives
+            self.assertEqual(filter_repo(sessions, None), sessions)
+            self.assertEqual({r["name"] for r in repositories(sessions)}, {"webshop", "api", "infra"})
+
+    def test_subfolder_counts_as_repo(self):
+        s = Session("s", "p", cwd="/code/app/src")
+        self.assertTrue(in_repo(s, "/code/app"))
+        self.assertTrue(in_repo(s, "/code/app/"))
+        self.assertFalse(in_repo(s, "/code/ap"))
+
+
+class DiscoverTest(unittest.TestCase):
+    def test_finds_repos_and_skips_junk(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for rel in ["code/app/.git", "code/app/sub/.git", "work/api/.git",
+                        "code/node_modules/dep/.git", ".hidden/x/.git", "a/b/c/d/e/deep/.git"]:
+                (root / rel).mkdir(parents=True)
+            found = discover.find_git_repos([d], max_depth=4)
+            self.assertEqual(sorted(Path(p).name for p in found), ["api", "app"])
+
+    def test_config_coerce(self):
+        self.assertEqual(config.coerce("repo_roots", "~/Code, ~/Work,"), ["~/Code", "~/Work"])
+        self.assertTrue(config.coerce("route_nudges", "yes"))
+        self.assertEqual(config.coerce("scan_depth", "3"), 3)
 
 
 class RouterTest(unittest.TestCase):
@@ -151,6 +187,22 @@ class InstallerTest(unittest.TestCase):
             data = json.loads(settings.read_text())
             self.assertNotIn("UserPromptSubmit", data.get("hooks", {}))
             self.assertEqual(data["statusLine"]["command"], "mine")
+
+    def test_repo_install_is_local_to_repo(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as repo:
+            installer.apply(home, repo=repo)
+            self.assertEqual(list(Path(home).iterdir()), [])
+            local = json.loads((Path(repo) / ".claude" / "settings.local.json").read_text())
+            self.assertIn("UserPromptSubmit", local["hooks"])
+            self.assertTrue((Path(repo) / ".claude" / "agents" / "runner.md").exists())
+            self.assertFalse((Path(repo) / ".claude" / "settings.json").exists())
+            installer.uninstall(home, repo=repo)
+            local = json.loads((Path(repo) / ".claude" / "settings.local.json").read_text())
+            self.assertNotIn("UserPromptSubmit", local.get("hooks", {}))
+
+    def test_repo_install_rejects_missing_folder(self):
+        with self.assertRaises(FileNotFoundError):
+            installer.apply(repo="/no/such/folder/anywhere")
 
     def test_plan_does_not_write(self):
         with tempfile.TemporaryDirectory() as d:

@@ -103,6 +103,8 @@ td.title { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-sp
 .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
 .meter .mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink-2); }
 .meter span { font-variant-numeric: tabular-nums; color: var(--ink-2); width: 44px; text-align: right; }
+select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 6px 10px; max-width: 100%; }
 textarea, input[type=number], input[type=text] { width: 100%; font: inherit; color: var(--ink); background: var(--raised);
   border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 textarea { min-height: 96px; resize: vertical; }
@@ -150,6 +152,9 @@ textarea { min-height: 96px; resize: vertical; }
 <main>
   <section id="overview">
     <div class="toolbar">
+      <label class="sr-only" for="repo">Repository</label>
+      <select id="repo"><option value="">All repositories</option></select>
+      <button class="btn ghost" id="rescan" type="button" title="Look for new git repositories on this computer">Rescan</button>
       <div class="seg" id="days">
         <button data-days="7">7 days</button>
         <button data-days="30" aria-pressed="true">30 days</button>
@@ -209,6 +214,13 @@ textarea { min-height: 96px; resize: vertical; }
         <li><b>Status line:</b> a live context meter that turns amber, then red, as compaction becomes due.</li>
         <li><b>Cost-aware subagents:</b> <code>scout</code> (Haiku, exploration), <code>runner</code> (Haiku, tests/builds) and <code>architect</code> (Opus, design advice for Sonnet sessions).</li>
       </ol>
+      <p class="note" id="install-scope"></p>
+      <div class="toolbar" style="margin:10px 0">
+        <button class="btn" id="install-btn" type="button">Install</button>
+        <button class="btn ghost" id="uninstall-btn" type="button">Remove</button>
+        <span class="note" id="install-msg"></span>
+      </div>
+      <p class="note" style="margin:0">Or from a terminal, in the creditoptimiser folder:</p>
       <pre><code id="install-cmd">python3 -m creditopt install --apply</code></pre>
       <div class="tablewrap"><table id="plan-table"></table></div>
     </div>
@@ -219,6 +231,8 @@ textarea { min-height: 96px; resize: vertical; }
         <div><label for="context_budget">Compact budget (tokens)</label><input type="number" id="context_budget" min="20000" step="10000"></div>
         <div><label for="warn_ratio">Warn at fraction of budget</label><input type="number" id="warn_ratio" min="0.3" max="0.95" step="0.05"></div>
         <div><label for="idle_minutes">Cold-cache warning after (minutes)</label><input type="number" id="idle_minutes" min="5" step="5"></div>
+        <div><label for="repo_roots">Folders to scan for repositories (comma-separated; blank = home folder)</label><input type="text" id="repo_roots" placeholder="~/Code, ~/Projects"></div>
+        <div><label for="scan_depth">Scan depth (folders deep)</label><input type="number" id="scan_depth" min="1" max="8"></div>
         <div class="check"><input type="checkbox" id="block_over_budget"><label for="block_over_budget">Hold the first prompt sent past the budget, so you can /compact first</label></div>
         <div class="check"><input type="checkbox" id="route_nudges"><label for="route_nudges">Suggest a cheaper model when a trivial prompt goes to Opus/Fable</label></div>
         <div><button class="btn" type="submit">Save settings</button> <span class="note" id="saved"></span></div>
@@ -236,8 +250,18 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const money = v => v >= 100 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`;
 const ktok = v => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : `${Math.round(v / 1e3)}k`;
 const day = iso => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-let DATA = null, DAYS = 30;
-try { DAYS = Number(localStorage.getItem("co-days") ?? 30); } catch (e) {}
+let DATA = null, DAYS = 30, REPO = "";
+try { DAYS = Number(localStorage.getItem("co-days") ?? 30); REPO = localStorage.getItem("co-repo") || ""; } catch (e) {}
+const urlRepo = new URLSearchParams(location.search).get("repo");
+if (urlRepo !== null) REPO = urlRepo;
+$("#repo").addEventListener("change", e => {
+  REPO = e.target.value;
+  try { localStorage.setItem("co-repo", REPO); } catch (err) {}
+  const u = new URL(location.href);
+  REPO ? u.searchParams.set("repo", REPO) : u.searchParams.delete("repo");
+  history.replaceState(null, "", u);
+  load();
+});
 
 // ---- tabs
 document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => {
@@ -266,17 +290,19 @@ function showTip(html, ev) {
 }
 const hideTip = () => tip.style.display = "none";
 
-async function load() {
-  const res = await fetch(`/api/report?days=${DAYS}`);
+async function load(rescan = false) {
+  const res = await fetch(`/api/report?days=${DAYS}&repo=${encodeURIComponent(REPO)}${rescan ? "&rescan=1" : ""}`);
   DATA = await res.json();
   render();
 }
 
 function render() {
   const t = DATA.totals;
-  $("#range").textContent = t.first
+  const repoName = REPO ? REPO.split(/[\\/]/).filter(Boolean).pop() : "";
+  $("#range").textContent = (repoName ? `${repoName} · ` : "") + (t.first
     ? `${t.sessions} sessions · ${day(t.first)} – ${day(t.last)}`
-    : "No Claude Code usage found in this period";
+    : "No Claude Code usage found in this period");
+  renderRepoPicker();
   renderTiles(t); renderRecs(); renderDaily(); renderShares(); renderSessions(); renderSetup();
 }
 
@@ -403,22 +429,64 @@ function renderSessions() {
   }));
 }
 
+function renderRepoPicker() {
+  const repos = [...DATA.repositories];
+  if (REPO && !repos.some(r => r.path === REPO)) repos.unshift({ path: REPO, name: REPO.split(/[\\/]/).filter(Boolean).pop() || REPO, cost: 0, used: true });
+  // Disambiguate repos that share a folder name by showing their parent folder.
+  const counts = {};
+  repos.forEach(r => counts[r.name] = (counts[r.name] || 0) + 1);
+  const label = r => counts[r.name] > 1 ? `${r.name} (${r.path.split(/[\\/]/).slice(-2, -1)[0] || r.path})` : r.name;
+  const opt = r => `<option value="${esc(r.path)}" title="${esc(r.path)}">${esc(label(r))}${r.used ? ` · ${money(r.cost)}` : ""}</option>`;
+  const used = repos.filter(r => r.used), other = repos.filter(r => !r.used);
+  $("#repo").innerHTML = `<option value="">All repositories</option>` +
+    (used.length ? `<optgroup label="Used with Claude Code">${used.map(opt).join("")}</optgroup>` : "") +
+    (other.length ? `<optgroup label="Other git repositories on this computer">${other.map(opt).join("")}</optgroup>` : "");
+  $("#repo").value = REPO;
+}
+$("#rescan").addEventListener("click", async () => {
+  $("#rescan").textContent = "Scanning…"; $("#rescan").disabled = true;
+  try { await load(true); } finally { $("#rescan").textContent = "Rescan"; $("#rescan").disabled = false; }
+});
+
 function renderSetup() {
+  const q = REPO ? ` --repo '${REPO.replace(/'/g, "'\\''")}'` : "";
+  $("#install-cmd").textContent = `python3 -m creditopt install${q} --apply`;
+  const name = REPO ? REPO.split(/[\\/]/).filter(Boolean).pop() : "";
+  $("#install-btn").textContent = REPO ? `Install for ${name}` : "Install for all repositories";
+  $("#uninstall-btn").textContent = REPO ? `Remove from ${name}` : "Remove from all repositories";
+  $("#install-scope").textContent = REPO
+    ? `Installing for this repository only: everything goes in its .claude/ folder (the hook in settings.local.json, which isn't committed). Pick "All repositories" at the top of Overview to install everywhere.`
+    : `Installing for all of Claude Code (~/.claude). To limit it to one repository, pick it at the top of the Overview tab.`;
   $("#plan-table").innerHTML = `<thead><tr><th>Component</th><th>Status if you install now</th><th>Location</th></tr></thead><tbody>` +
     DATA.install_plan.map(s => `<tr><td>${esc(s.what)}</td><td>${esc(s.action)}</td><td><code>${esc(s.path)}</code></td></tr>`).join("") + "</tbody>";
   const c = DATA.config;
-  ["context_budget", "warn_ratio", "idle_minutes"].forEach(k => $("#" + k).value = c[k]);
+  ["context_budget", "warn_ratio", "idle_minutes", "scan_depth"].forEach(k => $("#" + k).value = c[k]);
+  $("#repo_roots").value = c.repo_roots.join(", ");
   ["block_over_budget", "route_nudges"].forEach(k => $("#" + k).checked = c[k]);
 }
+async function install(uninstall) {
+  const target = REPO || "all of Claude Code (~/.claude)";
+  if (!confirm(`${uninstall ? "Remove CreditOptimiser from" : "Install CreditOptimiser for"} ${target}?`)) return;
+  $("#install-msg").textContent = "Working…";
+  const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: REPO, uninstall }) });
+  const out = await res.json();
+  if (!res.ok) { $("#install-msg").textContent = out.error || "Failed."; return; }
+  DATA.install_plan = out.plan; renderSetup();
+  $("#install-msg").textContent = uninstall ? "Removed. Restart Claude Code." : "Installed. Restart Claude Code (or start a new session) to pick it up.";
+}
+$("#install-btn").addEventListener("click", () => install(false));
+$("#uninstall-btn").addEventListener("click", () => install(true));
+
 $("#settings").addEventListener("submit", async ev => {
   ev.preventDefault();
   const body = {};
-  ["context_budget", "idle_minutes"].forEach(k => body[k] = parseInt($("#" + k).value, 10));
+  ["context_budget", "idle_minutes", "scan_depth"].forEach(k => body[k] = parseInt($("#" + k).value, 10));
+  body.repo_roots = $("#repo_roots").value;
   body.warn_ratio = parseFloat($("#warn_ratio").value);
   ["block_over_budget", "route_nudges"].forEach(k => body[k] = $("#" + k).checked);
   const res = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   $("#saved").textContent = res.ok ? "Saved. Recalculating…" : "Couldn't save.";
-  if (res.ok) { await load(); $("#saved").textContent = "Saved."; }
+  if (res.ok) { await load(true); $("#saved").textContent = "Saved."; }
 });
 
 // ---- router
