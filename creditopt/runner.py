@@ -51,6 +51,17 @@ AGENT_DEFS = {
         "tools": ["Read", "Grep", "Glob", "Edit", "Write"],
         "model": "sonnet",
     },
+    "reviewer": {
+        "description": "Independent senior reviewer. Use once the work looks finished: it reads the "
+                       "diff against the original task and reports real problems (bugs, missed "
+                       "requirements, broken edge cases), not style nits.",
+        "prompt": "You review a change against the task you're given. Run `git diff` and "
+                  "`git status`, read whatever surrounding code you need, and list concrete "
+                  "problems with file:line and why each matters. If it's correct and complete, say "
+                  "so plainly. Don't edit files.",
+        "tools": ["Bash", "Read", "Grep", "Glob"],
+        "model": "opus",
+    },
     "verifier": {
         "description": "Runs tests, builds or linters and reports only what matters. Use after "
                        "making changes, if shell commands are permitted in this repo.",
@@ -79,65 +90,208 @@ def shell_allowed(repo, claude_dir=None):
 
 
 def _multi_part(task):
-    """Count independent parts: bullet/numbered lines, or 'then/also/and also' clauses."""
+    """Count independent parts: bullet or numbered lines."""
     bullets = len(re.findall(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+\S", task))
     return bullets if bullets >= 2 else 0
 
 
-def plan_run(task, repo, model=None):
-    """Decide the lead model and which subagents to give it. Pure: nothing runs."""
-    rec = router.route(task)
-    lead = model if model in models.BY_KEY else rec["model"]
+# --- run options ---------------------------------------------------------------
+#
+# Every behaviour is a setting. A preset fills them all in; any single setting
+# can then be changed. "quality" is the default: CreditOptimiser still routes
+# to the cheapest suitable model, but it checks and reviews the work.
+
+PRESETS = {
+    "savings": {"priority": "savings", "model": "auto", "subagents": "auto", "self_test": False,
+                "review": False, "escalate": "off", "access": "edit"},
+    "balanced": {"priority": "balanced", "model": "auto", "subagents": "auto", "self_test": True,
+                 "review": False, "escalate": "opus", "access": "edit"},
+    "quality": {"priority": "quality", "model": "auto", "subagents": "auto", "self_test": True,
+                "review": True, "escalate": "opus", "access": "edit"},
+}
+OPTION_KEYS = list(PRESETS["quality"]) + ["test_command"]
+CHOICES = {
+    "priority": ("savings", "balanced", "quality"),
+    "model": ("auto", "haiku", "sonnet", "opus", "fable"),
+    "escalate": ("off", "sonnet", "opus", "fable"),
+    "access": ("plan", "edit"),
+}
+SUBAGENTS = ("scout", "implementer", "verifier", "reviewer")
+
+
+def resolve_options(options=None):
+    """Merge a preset, the user's saved defaults and per-run overrides into one dict."""
+    options = dict(options or {})
+    saved = config.load().get("run_defaults") or {}
+    preset = options.get("preset") or saved.get("preset") or "quality"
+    if preset not in PRESETS:
+        preset = "quality"
+    out = {**PRESETS[preset], "test_command": ""}
+    if not options.get("preset") or options.get("preset") == saved.get("preset"):
+        out.update({k: v for k, v in saved.items() if k in OPTION_KEYS})
+    out.update({k: v for k, v in options.items() if k in OPTION_KEYS and v is not None})
+    for k, allowed in CHOICES.items():
+        if out[k] not in allowed:
+            out[k] = PRESETS[preset][k]
+    sa = out["subagents"]
+    if isinstance(sa, str) and sa not in ("auto", "off"):
+        sa = [x.strip() for x in sa.split(",")]
+    if isinstance(sa, list):
+        sa = [x for x in sa if x in SUBAGENTS]
+    out["subagents"] = sa
+    out["self_test"] = bool(out["self_test"])
+    out["review"] = bool(out["review"])
+    out["test_command"] = str(out.get("test_command") or "").strip()
+    out["preset"] = preset
+    return out
+
+
+def detect_test_command(repo):
+    """Best guess at a repo's test command, or '' if there's no obvious one."""
+    root = Path(repo or ".")
+    try:
+        pkg = json.loads((root / "package.json").read_text())
+        script = (pkg.get("scripts") or {}).get("test", "")
+        if script and "no test specified" not in script:
+            if (root / "pnpm-lock.yaml").exists():
+                return "pnpm test"
+            if (root / "yarn.lock").exists():
+                return "yarn test"
+            return "npm test"
+    except (OSError, ValueError):
+        pass
+    if (root / "Cargo.toml").exists():
+        return "cargo test"
+    if (root / "go.mod").exists():
+        return "go test ./..."
+    py = any((root / f).exists() for f in ("pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "tox.ini"))
+    if (root / "pytest.ini").exists() or (root / "conftest.py").exists():
+        return "python3 -m pytest"
+    try:
+        if "pytest" in (root / "pyproject.toml").read_text():
+            return "python3 -m pytest"
+    except OSError:
+        pass
+    if (root / "tests").is_dir() and (py or any((root / "tests").glob("test_*.py"))):
+        return "python3 -m unittest discover -s tests"
+    try:
+        if re.search(r"(?m)^test:", (root / "Makefile").read_text()):
+            return "make test"
+    except OSError:
+        pass
+    if (root / "Gemfile").exists() and (root / "spec").is_dir():
+        return "bundle exec rspec"
+    return ""
+
+
+def allowed_tools(plan):
+    """Extra permissions granted for this run only (never written to settings)."""
+    tools = []
+    if plan["test_command"]:
+        tools += [f"Bash({plan['test_command']})", f"Bash({plan['test_command']} *)"]
+    if any(a["name"] == "reviewer" for a in plan["agents"]):
+        tools += ["Bash(git diff)", "Bash(git diff *)", "Bash(git status)", "Bash(git status *)"]
+    return tools
+
+
+def plan_run(task, repo, model=None, options=None):
+    """Decide the lead model, sub-agents and checks. Pure: nothing runs."""
+    opts = resolve_options({**(options or {}), **({"model": model} if model else {})})
+    rec = router.route(task, opts["priority"])
+    lead = opts["model"] if opts["model"] != "auto" else rec["model"]
     m = models.BY_KEY[lead]
     parts = _multi_part(task)
     reasons = set(rec["reasons"])
+    plan_only = opts["access"] == "plan"
 
-    shell = shell_allowed(repo)
-    agents, why = [], []
-    if lead != "haiku":
-        agents.append("scout")
-        why.append("a Haiku scout explores the codebase so search output stays out of the "
-                   f"{m.name} context")
-        if shell:
-            agents.append("verifier")
-            why.append("a Haiku verifier runs the tests cheaply")
-    if lead in ("opus", "fable"):
-        agents.append("implementer")
-        why.append(f"{m.name} leads on design; routine edits go to a Sonnet implementer at "
-                   f"{models.BY_KEY['sonnet'].output / m.output:.0%} of the price")
-    elif parts >= 3 or "codebase-wide scope" in reasons:
-        agents.append("implementer")
-        why.append("independent parts are handed to parallel Sonnet implementers")
-    if not agents:
-        why.append("small task: a single Haiku session is cheapest, so no subagents")
+    test_cmd = ""
+    if opts["self_test"] and not plan_only:
+        test_cmd = opts["test_command"] or detect_test_command(repo)
+    shell = shell_allowed(repo) or bool(test_cmd)
 
-    instructions = [
-        "You were launched by CreditOptimiser, which picked your model to balance cost and quality.",
-    ]
-    if "scout" in agents:
-        instructions.append("Delegate searching and exploration to the `scout` subagent instead "
-                            "of reading many files yourself.")
-    if "implementer" in agents:
-        instructions.append("Decide the approach yourself, then delegate clearly specified edits "
-                            "to `implementer` subagents (in parallel for independent parts). "
-                            "Review their reports before finishing.")
-    if "verifier" in agents:
-        instructions.append("After changing code, ask the `verifier` subagent to run the relevant "
-                            "tests or build. Some commands may still be refused by permissions.")
+    # Which sub-agents: chosen automatically, switched off, or picked by hand.
+    if opts["subagents"] == "off":
+        agents = []
+    elif isinstance(opts["subagents"], list):
+        agents = list(opts["subagents"])
     else:
-        instructions.append("Shell commands are not permitted here, so don't try to run tests or "
-                            "builds. Check your work by reading the code, and list the exact "
-                            "commands the user should run.")
-    instructions.append("End your final message with exactly one line: `STATUS: DONE` if the "
-                        "task is complete and verified, `STATUS: UNVERIFIED: <checks to run>` if "
-                        "the work is complete but you couldn't run its checks, or "
-                        "`STATUS: INCOMPLETE: <reason>` if the work itself isn't finished.")
+        agents = []
+        if lead != "haiku":
+            agents.append("scout")
+        if lead in ("opus", "fable") and not plan_only:
+            agents.append("implementer")
+        elif (parts >= 3 or "codebase-wide scope" in reasons) and not plan_only:
+            agents.append("implementer")
+        if lead != "haiku" and shell and not plan_only:
+            agents.append("verifier")
+    review_skipped = ""
+    if opts["review"] and not plan_only and "reviewer" not in agents:
+        if lead == "haiku":
+            review_skipped = "no Opus review: for a small mechanical task it would cost more than the task"
+        elif lead == "fable":
+            review_skipped = "no Opus review: Fable is already the strongest model"
+        else:
+            agents.append("reviewer")
+    if plan_only:
+        agents = [a for a in agents if a == "scout"]
+    agents = [a for a in SUBAGENTS if a in agents]  # stable order
 
-    # Never auto-escalate to Fable: at 2.5x Opus prices, that should be your call.
-    escalate_to = next((x.key for x in models.CATALOGUE if x.tier == m.tier + 1 and x.key != "fable"), None)
+    why = []
+    if "scout" in agents:
+        why.append(f"a Haiku scout does the searching, so file dumps stay out of the {m.name} context")
+    if "implementer" in agents:
+        why.append(f"{m.name} decides the approach; clearly specified edits go to Sonnet implementers"
+                   + (" in parallel" if parts >= 3 else ""))
+    if "verifier" in agents:
+        why.append("a Haiku verifier runs the tests cheaply")
+    elif test_cmd:
+        why.append(f"the lead runs `{test_cmd}` itself to check its work")
+    if "reviewer" in agents:
+        why.append(f"an Opus reviewer checks the final diff against the task before it's called done")
+    if review_skipped:
+        why.append(review_skipped)
+    if not agents:
+        why.append("no sub-agents: a single session is cheapest for this")
+    if opts["self_test"] and not test_cmd and not plan_only:
+        why.append("testing is on, but no test command was found. Set one, or it will ask you to test")
+
+    instructions = ["You were launched by CreditOptimiser, which picked your model and helpers to "
+                    "get the best result for the credit spent. Don't cut corners to save tokens: "
+                    "do the task properly."]
+    if plan_only:
+        instructions.append("Read-only run: investigate and produce a clear plan. Don't change files.")
+    if "scout" in agents:
+        instructions.append("Delegate searching and exploration to the `scout` subagent instead of "
+                            "reading many files yourself.")
+    if "implementer" in agents:
+        instructions.append("Decide the approach yourself, then delegate clearly specified edits to "
+                            "`implementer` subagents (in parallel for independent parts). Review "
+                            "their reports before finishing.")
+    if test_cmd:
+        runner_name = "the `verifier` subagent" if "verifier" in agents else "yourself"
+        instructions.append(f"After changing code, run `{test_cmd}` ({runner_name}) and fix failures "
+                            "your change caused. Report any failures that were already there.")
+    elif not plan_only:
+        instructions.append("Don't try to run tests or builds: shell commands aren't permitted. Check "
+                            "your work by reading it, and list the commands the user should run.")
+    if "reviewer" in agents:
+        instructions.append("When you think you're done, ask the `reviewer` subagent to review the "
+                            "changes (it can run git diff) against the original task. Fix every real "
+                            "problem it finds before finishing.")
+    instructions.append("End your final message with exactly one line: `STATUS: DONE` if the task "
+                        "is complete and verified, `STATUS: UNVERIFIED: <checks to run>` if it's "
+                        "complete but couldn't be checked, or `STATUS: INCOMPLETE: <reason>` if the "
+                        "work itself isn't finished.")
+
+    ceiling = models.BY_KEY[opts["escalate"]].tier if opts["escalate"] != "off" else 0
+    escalate_to = next((x.key for x in models.CATALOGUE
+                        if x.tier == m.tier + 1 and x.tier <= ceiling), None)
+    if not config.load()["auto_escalate"]:
+        escalate_to = None
     return {
         "task": task,
         "repo": repo,
+        "options": opts,
         "model": lead,
         "model_name": m.name,
         "routed_model": rec["model"],
@@ -146,9 +300,11 @@ def plan_run(task, repo, model=None):
                     "description": AGENT_DEFS[a]["description"]} for a in agents],
         "strategy": why,
         "parts": parts,
-        "permission_mode": PERMISSION_MODE,
+        "permission_mode": "plan" if plan_only else PERMISSION_MODE,
         "shell_allowed": shell,
-        "escalate_to": escalate_to if config.load()["auto_escalate"] else None,
+        "test_command": test_cmd,
+        "detected_test_command": detect_test_command(repo),
+        "escalate_to": escalate_to,
         "system_prompt": " ".join(instructions),
     }
 
@@ -172,6 +328,9 @@ def build_command(plan, claude, prompt=None, resume=None, model=None):
            "--append-system-prompt", plan["system_prompt"]]
     if plan["agents"]:
         cmd += ["--agents", json.dumps({a["name"]: AGENT_DEFS[a["name"]] for a in plan["agents"]})]
+    extra = allowed_tools(plan)
+    if extra:
+        cmd += ["--allowedTools", *extra]
     if resume:
         cmd += ["--resume", resume]
     return cmd
@@ -308,7 +467,7 @@ def _log(run):
         pass
 
 
-def start(task, repo, model=None):
+def start(task, repo, model=None, options=None):
     """Plan and launch a run in the background. Returns the Run, or raises ValueError."""
     task = (task or "").strip()
     if not task:
@@ -319,7 +478,7 @@ def start(task, repo, model=None):
     if not claude:
         raise ValueError("Couldn't find the `claude` command. Install Claude Code, or set "
                          "claude_path in settings.")
-    run = Run(plan_run(task, repo, model))
+    run = Run(plan_run(task, repo, model, options))
     RUNS[run.id] = run
     threading.Thread(target=_execute, args=(run, claude), daemon=True).start()
     return run

@@ -156,6 +156,15 @@ textarea { min-height: 96px; resize: vertical; }
 .pill.running::before { background: var(--accent); } .pill.done::before { background: var(--good); }
 .pill.unverified::before, .pill.incomplete::before { background: var(--warning); }
 .pill.failed::before, .pill.cancelled::before { background: var(--critical); }
+.opts { border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin: 12px 0; background: var(--page); }
+.opts-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.opts select, .opts input[type=text] { width: 100%; }
+.seg button:disabled { cursor: default; }
+.checks[hidden] { display: none; }
+.checks { display: grid; gap: 4px; margin-top: 6px; font-size: 12.5px; color: var(--ink-2); }
+details.pledge { margin-top: 12px; }
+details.pledge summary { cursor: pointer; font-weight: 600; }
+details.pledge li { margin: 4px 0; color: var(--ink-2); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -225,18 +234,61 @@ textarea { min-height: 96px; resize: vertical; }
       <p class="desc" id="run-where">Describe what you want done. CreditOptimiser picks the cheapest model likely to do it well, adds sub-agents where they save money, and runs Claude Code in the selected repository.</p>
       <textarea id="task" placeholder="e.g. Add pagination to the /orders endpoint and update its tests"></textarea>
       <div class="examples" id="examples"></div>
+      <div class="opts">
+        <div class="opts-head">
+          <b>How much should the optimiser do?</b>
+          <div class="seg" id="preset">
+            <button type="button" data-preset="savings">Max savings</button>
+            <button type="button" data-preset="balanced">Balanced</button>
+            <button type="button" data-preset="quality">Best quality</button>
+            <button type="button" data-preset="custom" disabled>Custom</button>
+          </div>
+        </div>
+        <p class="note" id="preset-desc"></p>
+        <div class="form">
+          <div><label for="o-model">Model</label>
+            <select id="o-model"><option value="auto">Choose for me</option><option value="haiku">Haiku 4.5</option>
+              <option value="sonnet">Sonnet 5.5</option><option value="opus">Opus 5.5</option><option value="fable">Fable 5.1</option></select></div>
+          <div><label for="o-priority">On borderline calls, lean towards</label>
+            <select id="o-priority"><option value="quality">The stronger model</option><option value="balanced">Neither</option><option value="savings">The cheaper model</option></select></div>
+          <div><label for="o-subagents">Sub-agents</label>
+            <select id="o-subagents"><option value="auto">Use where they help</option><option value="off">Never</option><option value="custom">Let me pick</option></select>
+            <div class="checks" id="o-agent-picks" hidden>
+              <label><input type="checkbox" value="scout"> scout (Haiku, searching)</label>
+              <label><input type="checkbox" value="implementer"> implementer (Sonnet, edits)</label>
+              <label><input type="checkbox" value="verifier"> verifier (Haiku, runs tests)</label>
+              <label><input type="checkbox" value="reviewer"> reviewer (Opus, checks the diff)</label>
+            </div></div>
+          <div><label for="o-escalate">If the work isn't finished, retry on a stronger model up to</label>
+            <select id="o-escalate"><option value="off">Don't retry</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option><option value="fable">Fable (costly)</option></select></div>
+          <div><label for="o-access">Access</label>
+            <select id="o-access"><option value="edit">Read and edit files</option><option value="plan">Read only: produce a plan</option></select></div>
+          <div>
+            <div class="check"><input type="checkbox" id="o-self_test"><label for="o-self_test">Test its own work (allows only this command, for this run)</label></div>
+            <input type="text" id="o-test_command" placeholder="test command" style="margin-top:6px">
+          </div>
+          <div class="check"><input type="checkbox" id="o-review"><label for="o-review">Have an Opus reviewer check the finished change against the task</label></div>
+        </div>
+        <div class="runbar"><button class="btn ghost" type="button" id="save-defaults">Save as my defaults</button><span class="note" id="defaults-msg"></span></div>
+      </div>
       <div class="runbar">
-        <label for="model-override" class="note">Model</label>
-        <select id="model-override">
-          <option value="">Auto (recommended)</option>
-          <option value="haiku">Haiku 4.5</option><option value="sonnet">Sonnet 5.5</option>
-          <option value="opus">Opus 5.5</option><option value="fable">Fable 5.1</option>
-        </select>
         <button class="btn ghost" id="route-btn" type="button">Preview plan</button>
         <button class="btn" id="run-btn" type="button">Run</button>
         <button class="btn ghost" id="cancel-btn" type="button" hidden>Cancel</button>
         <span class="note" id="run-msg"></span>
       </div>
+      <details class="pledge">
+        <summary>Our quality commitment</summary>
+        <ul>
+          <li><b>Cheapest that will do it well, not just the cheapest.</b> Model choice is based on what the task needs. On "Best quality", borderline calls go to the stronger model.</li>
+          <li><b>Savings come from waste, not corners.</b> Search output goes to cheap helpers, routine edits to cheaper models, and stale context gets cleared. The model doing the thinking keeps its full ability.</li>
+          <li><b>Every run is told to do the task properly</b>, not to economise on tokens.</li>
+          <li><b>Work is checked when you allow it:</b> your tests are run, and an Opus reviewer reads the diff against your request.</li>
+          <li><b>Unfinished work gets a stronger model.</b> It's resumed (up to your chosen limit) and keeps what's been done so far.</li>
+          <li><b>Honest results.</b> Every run reports done, done but not tested, or incomplete, says what wasn't verified, and shows exactly what it cost.</li>
+          <li><b>You're in charge.</b> Every one of these can be changed above, and the model can always be overridden.</li>
+        </ul>
+      </details>
       <div class="plan" id="route-result"></div>
       <div id="run-panel"></div>
     </div>
@@ -557,7 +609,8 @@ function renderRunWhere() {
 async function preview() {
   const task = $("#task").value.trim();
   if (!task) return;
-  const p = await (await post("/api/plan", { task, repo: REPO, model: $("#model-override").value || null })).json();
+  const p = await (await post("/api/plan", { task, repo: REPO, options: runOptions() })).json();
+  if (p.detected_test_command) $("#o-test_command").placeholder = `detected: ${p.detected_test_command}`;
   const cat = DATA ? DATA.catalogue : [];
   $("#route-result").innerHTML = `
     <div class="card">
@@ -569,8 +622,9 @@ async function preview() {
       <b>Sub-agents</b>
       ${p.agents.length ? `<div class="agents">${p.agents.map(a => `<div><b><span class="dot" style="background:${color(a.model)}"></span>${esc(a.name)}</b> · ${esc(NAMES[a.model])}<br>${esc(a.description)}</div>`).join("")}</div>` : `<p class="note">None needed.</p>`}
       <ul>${p.strategy.map(w => `<li>${esc(w)}</li>`).join("")}</ul>
-      <p class="note">${p.shell_allowed ? "Shell commands are allowed in this repo, so it will run tests." : "Shell commands aren't allowed in this repo, so it won't run tests; it will tell you which to run."}
-        ${p.escalate_to ? ` If the work isn't finished, it resumes once on ${esc(NAMES[p.escalate_to])}.` : ""}</p>
+      <p class="note">${p.options.access === "plan" ? "Read-only: it will investigate and write a plan, without changing files." :
+        p.test_command ? `It will run <code>${esc(p.test_command)}</code> to check its work.` : "It won't run tests; it will tell you which to run."}
+        ${p.escalate_to ? ` If the work isn't finished, it resumes on ${esc(NAMES[p.escalate_to])}.` : " No automatic retry."}</p>
     </div>`;
 }
 
@@ -580,7 +634,7 @@ async function startRun() {
   if (!task || !REPO) return;
   if (!confirm(`Run this task in ${repoName()}? Claude Code will be able to edit files there.`)) return;
   await preview();
-  const res = await post("/api/run", { task, repo: REPO, model: $("#model-override").value || null });
+  const res = await post("/api/run", { task, repo: REPO, options: runOptions() });
   const out = await res.json();
   if (!res.ok) { $("#run-msg").textContent = out.error; return; }
   RUN_ID = out.id; RUN_NEXT = 0; $("#run-msg").textContent = "";
@@ -617,8 +671,59 @@ function renderEvent(ev) {
   return "";
 }
 
+// ---- run options
+let PRESETS = {}, OPTS = null;
+const PRESET_DESC = {
+  savings: "Cheapest setup that can do the task. No tests, no review, no retries.",
+  balanced: "Routes to the cheapest suitable model, runs your tests, and retries unfinished work on Opus.",
+  quality: "Still routes to save credit, but borderline calls go to the stronger model. Your tests are run, an Opus reviewer checks the change, and unfinished work is retried on Opus.",
+  custom: "Your own mix of settings.",
+};
+function applyOpts(o) {
+  OPTS = { ...o };
+  ["model", "priority", "escalate", "access"].forEach(k => $("#o-" + k).value = o[k]);
+  $("#o-self_test").checked = o.self_test; $("#o-review").checked = o.review;
+  $("#o-test_command").value = o.test_command || "";
+  const custom = Array.isArray(o.subagents);
+  $("#o-subagents").value = custom ? "custom" : o.subagents;
+  $("#o-agent-picks").hidden = !custom;
+  $("#o-agent-picks").querySelectorAll("input").forEach(c => c.checked = custom && o.subagents.includes(c.value));
+  markPreset();
+}
+function readOpts() {
+  const sub = $("#o-subagents").value;
+  return {
+    model: $("#o-model").value, priority: $("#o-priority").value, escalate: $("#o-escalate").value,
+    access: $("#o-access").value, self_test: $("#o-self_test").checked, review: $("#o-review").checked,
+    test_command: $("#o-test_command").value.trim(),
+    subagents: sub === "custom" ? [...$("#o-agent-picks").querySelectorAll("input:checked")].map(c => c.value) : sub,
+  };
+}
+function markPreset() {
+  const cur = readOpts(), same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const match = Object.keys(PRESETS).find(k => Object.keys(PRESETS[k]).every(f => same(PRESETS[k][f], cur[f])));
+  OPTS.preset = match || "custom";
+  document.querySelectorAll("#preset button").forEach(b => b.setAttribute("aria-pressed", b.dataset.preset === OPTS.preset));
+  $("#preset-desc").textContent = PRESET_DESC[OPTS.preset];
+}
+const runOptions = () => ({ ...readOpts(), preset: OPTS.preset === "custom" ? "quality" : OPTS.preset });
+document.querySelectorAll("#preset button[data-preset]:not([disabled])").forEach(b => b.addEventListener("click", () => {
+  applyOpts({ ...PRESETS[b.dataset.preset], test_command: $("#o-test_command").value.trim() });
+  if ($("#task").value.trim()) preview();
+}));
+$("#o-subagents").addEventListener("change", e => {
+  $("#o-agent-picks").hidden = e.target.value !== "custom";
+  if (e.target.value === "custom") $("#o-agent-picks").querySelectorAll("input").forEach(c => c.checked = c.value !== "implementer");
+});
+document.querySelector(".opts .form").addEventListener("change", () => { markPreset(); if ($("#task").value.trim()) preview(); });
+$("#save-defaults").addEventListener("click", async () => {
+  const res = await post("/api/config", { run_defaults: runOptions() });
+  $("#defaults-msg").textContent = res.ok ? "Saved. New runs start with these settings." : "Couldn't save.";
+});
+
 async function loadHistory() {
   const h = await (await fetch("/api/runs")).json();
+  if (!OPTS) { PRESETS = h.presets; applyOpts(h.defaults); }
   if (!h.claude) $("#run-msg").textContent = "The claude command wasn't found. Install Claude Code, or set claude_path in settings.";
   $("#run-history").innerHTML = h.history.length
     ? `<thead><tr><th>When</th><th>Task</th><th>Repository</th><th>Lead</th><th>Result</th><th class="num">Cost</th></tr></thead><tbody>` +

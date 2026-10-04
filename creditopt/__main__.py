@@ -49,7 +49,15 @@ def cmd_route(args):
 def cmd_run(args):
     task = " ".join(args.task)
     repo = args.repo or os.getcwd()
-    plan = runner.plan_run(task, repo, args.model)
+    options = {"preset": args.preset, "model": args.model, "priority": args.priority,
+               "self_test": args.self_test, "test_command": args.test_command,
+               "review": args.review, "escalate": args.escalate, "access": args.access,
+               "subagents": args.subagents}
+    options = {k: v for k, v in options.items() if v is not None}
+    plan = runner.plan_run(task, repo, options=options)
+    print(f"Preset: {plan['options']['preset']}" + (f"  Tests: {plan['test_command']}" if plan["test_command"] else "  Tests: off")
+          + f"  Review: {'on' if any(a['name'] == 'reviewer' for a in plan['agents']) else 'off'}"
+          + f"  Retry up to: {plan['options']['escalate']}")
     print(f"Lead: {plan['model_name']}  Subagents: "
           f"{', '.join(a['name'] + ' (' + a['model'] + ')' for a in plan['agents']) or 'none'}")
     for why in plan["strategy"]:
@@ -57,7 +65,7 @@ def cmd_run(args):
     if args.dry_run:
         return
     try:
-        run = runner.start(task, repo, args.model)
+        run = runner.start(task, repo, options=options)
     except ValueError as e:
         sys.exit(str(e))
     seen = 0
@@ -131,7 +139,15 @@ def main(argv=None):
 
     rn = sub.add_parser("run", help="run a task with Claude Code on the most cost-effective setup")
     rn.add_argument("task", nargs="+")
+    rn.add_argument("--preset", choices=list(runner.PRESETS), help="savings, balanced or quality (default: your saved defaults, else quality)")
     rn.add_argument("--model", choices=["haiku", "sonnet", "opus", "fable"], help="override the routed model")
+    rn.add_argument("--priority", choices=["savings", "balanced", "quality"], help="how borderline model choices lean")
+    rn.add_argument("--self-test", action=argparse.BooleanOptionalAction, default=None, help="let the run execute your tests")
+    rn.add_argument("--test-command", help="test command to allow (default: detected)")
+    rn.add_argument("--review", action=argparse.BooleanOptionalAction, default=None, help="have an Opus reviewer check the diff")
+    rn.add_argument("--escalate", choices=["off", "sonnet", "opus", "fable"], help="highest model an unfinished run may retry on")
+    rn.add_argument("--access", choices=["plan", "edit"], help="plan = read-only, edit = may edit files")
+    rn.add_argument("--subagents", help="auto, off, or a list like scout,reviewer")
     rn.add_argument("--dry-run", action="store_true", help="show the plan without running")
 
     i = sub.add_parser("install", help="add subagents, hook and status line to Claude Code")

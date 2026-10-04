@@ -68,7 +68,9 @@ def make_handler(claude_dir):
                 return self._send(200, (WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
             if url.path == "/api/runs":
                 return self._send(200, {"history": runner.history(),
-                                        "claude": bool(runner.find_claude())})
+                                        "claude": bool(runner.find_claude()),
+                                        "presets": runner.PRESETS,
+                                        "defaults": runner.resolve_options()})
             if url.path.startswith("/api/run/"):
                 run = runner.RUNS.get(url.path.rsplit("/", 1)[-1])
                 if not run:
@@ -96,11 +98,12 @@ def make_handler(claude_dir):
                 return self._send(200, router.route(str(body.get("task", ""))))
             if url.path == "/api/plan":
                 return self._send(200, runner.plan_run(str(body.get("task", "")),
-                                                       str(body.get("repo", "")), body.get("model")))
+                                                       str(body.get("repo", "")),
+                                                       options=body.get("options") or {}))
             if url.path == "/api/run":
                 try:
                     run = runner.start(str(body.get("task", "")), str(body.get("repo", "")),
-                                       body.get("model"))
+                                       options=body.get("options") or {})
                 except ValueError as e:
                     return self._send(400, {"error": str(e)})
                 return self._send(200, run.snapshot())

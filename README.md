@@ -25,16 +25,45 @@ Pick a repository, describe the task, and press **Run**. CreditOptimiser plans t
 setup that's likely to do the job well, then runs Claude Code in that repo and streams its
 progress, including the actual cost per model when it finishes.
 
+**How much it does is up to you.** Pick a preset, or change any single setting:
+
+| | Max savings | Balanced | Best quality (default) |
+|---|---|---|---|
+| Borderline model choices lean to | cheaper model | neither | stronger model |
+| Sub-agents | where they help | where they help | where they help |
+| Runs your tests (only that command, only for that run) | no | yes | yes |
+| Opus reviewer checks the finished change | no | no | yes (skipped for small mechanical tasks) |
+| Unfinished work is retried on a stronger model, up to | no retry | Opus | Opus |
+
+Other settings: a fixed model, sub-agents off or hand-picked, a custom test command, a
+read-only "plan" mode, and allowing retries up to Fable. **Save as my defaults** remembers
+your choice. From the terminal, use `--preset`, `--model`, `--priority`, `--[no-]self-test`,
+`--test-command`, `--[no-]review`, `--escalate`, `--access` and `--subagents`.
+
+**Our quality commitment.** CreditOptimiser saves credit by cutting waste, never corners:
+- It picks the cheapest model that will do the task *well*. On Best quality, borderline
+  calls go to the stronger model.
+- The savings come from cheap helpers doing the searching, cheaper models doing routine
+  edits, and clearing stale context. The model doing the thinking keeps its full ability,
+  and every run is told to do the task properly, not to economise on tokens.
+- When you allow it, the work is checked: your tests are run, and an Opus reviewer reads
+  the diff against your request.
+- Unfinished work is resumed on a stronger model, keeping what's been done.
+- It reports honestly: done, done but not tested, or incomplete, plus what wasn't verified
+  and the exact cost.
+
+What each run does:
 - **Lead model:** chosen by the router (you can override it). Haiku handles small
   mechanical tasks on its own, with no sub-agents.
 - **Sub-agents**, added only where they pay off:
   - `scout` (Haiku) does the searching, so file dumps don't sit in the expensive context.
   - `implementer` (Sonnet) makes clearly specified edits when Opus leads (half Opus's
     price), and runs in parallel for tasks with several independent parts.
-  - `verifier` (Haiku) runs tests and builds. It's only added when the repo's Claude Code
-    settings allow shell commands.
-- **Permissions:** runs can read and edit files (Claude Code's `acceptEdits` mode). Shell
-  commands are refused unless the repo's settings allow them. Review the changes with
+  - `verifier` (Haiku) runs your tests when testing is on.
+  - `reviewer` (Opus) reviews the finished diff against your request when review is on.
+- **Permissions:** runs can read and edit files (Claude Code's `acceptEdits` mode). Other
+  shell commands are refused unless the repo's settings allow them. Turning testing on allows
+  only your test command (plus `git diff`/`git status` for the reviewer), and only for that run. Review the changes with
   `git diff`. Working on a branch is a good habit.
 - **Quality guard:** every run ends with a status:
   - *done*: finished and checked.

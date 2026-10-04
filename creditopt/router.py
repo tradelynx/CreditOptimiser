@@ -62,8 +62,25 @@ def _scope_signals(text):
     return score, reasons
 
 
-def route(task):
-    """Return a recommendation dict for a free-text task description."""
+PRIORITY_BIAS = {"savings": -1, "balanced": 0, "quality": 1}
+
+
+def _pick(score, reasons):
+    if score >= 9 and any("escalation" in x for x in reasons):
+        return "fable"
+    if score >= 4:
+        return "opus"
+    if score >= 0:
+        return "sonnet"
+    return "haiku"
+
+
+def route(task, priority="balanced"):
+    """Return a recommendation dict for a free-text task description.
+
+    `priority` nudges borderline calls: "quality" picks the bigger model when
+    a task sits near a boundary, "savings" the smaller one.
+    """
     text = (task or "").strip()
     score, reasons = 0, []
     for rx, weight, why in _COMPILED:
@@ -74,14 +91,11 @@ def route(task):
     score += s
     reasons += r
 
-    if score >= 9 and any("escalation" in x for x in reasons):
-        key = "fable"
-    elif score >= 4:
-        key = "opus"
-    elif score >= 0:
-        key = "sonnet"
-    else:
-        key = "haiku"
+    key = _pick(score + PRIORITY_BIAS.get(priority, 0), reasons)
+    neutral = _pick(score, reasons)
+    if key != neutral:
+        reasons.append("quality first: borderline call, so the stronger model" if priority == "quality"
+                       else "savings first: borderline call, so the cheaper model")
 
     m = models.BY_KEY[key]
     tips = []

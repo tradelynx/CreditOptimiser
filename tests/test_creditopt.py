@@ -248,10 +248,48 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual((small["model"], small["agents"]), ("haiku", []))
         big = runner.plan_run("Design the architecture for migrating auth across the entire monorepo", str(self.repo))
         self.assertEqual(big["model"], "opus")
-        self.assertEqual([a["name"] for a in big["agents"]], ["scout", "implementer"])
+        self.assertEqual([a["name"] for a in big["agents"]], ["scout", "implementer", "reviewer"])
+        cheap = runner.plan_run("Design the architecture for migrating auth across the entire monorepo",
+                                str(self.repo), options={"preset": "savings"})
+        self.assertEqual([a["name"] for a in cheap["agents"]], ["scout", "implementer"])
+        self.assertIsNone(cheap["escalate_to"])
         self.assertFalse(big["shell_allowed"])
-        self.assertIn("don't try to run tests", big["system_prompt"])
+        self.assertIn("Don't try to run tests", big["system_prompt"])
         self.assertEqual(runner.plan_run("rename foo", str(self.repo), "sonnet")["model"], "sonnet")
+
+    def test_options(self):
+        from creditopt import runner
+        (self.repo / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}))
+        task = "Add pagination to the orders endpoint"
+        plan = runner.plan_run(task, str(self.repo))  # default preset: quality
+        self.assertEqual(plan["test_command"], "npm test")
+        self.assertIn("Bash(npm test)", runner.allowed_tools(plan))
+        self.assertIn("Bash(git diff *)", runner.allowed_tools(plan))
+        self.assertEqual([a["name"] for a in plan["agents"]], ["scout", "verifier", "reviewer"])
+        off = runner.plan_run(task, str(self.repo), options={"self_test": False, "review": False, "subagents": "off"})
+        self.assertEqual((off["agents"], off["test_command"], runner.allowed_tools(off)), ([], "", []))
+        picked = runner.plan_run(task, str(self.repo), options={"subagents": "reviewer", "test_command": "make check"})
+        self.assertEqual([a["name"] for a in picked["agents"]], ["reviewer"])
+        self.assertEqual(picked["test_command"], "make check")
+        ro = runner.plan_run(task, str(self.repo), options={"access": "plan"})
+        self.assertEqual((ro["permission_mode"], ro["test_command"]), ("plan", ""))
+        self.assertNotIn("reviewer", [a["name"] for a in ro["agents"]])
+        fab = runner.plan_run(task, str(self.repo), options={"model": "opus", "escalate": "fable"})
+        self.assertEqual(fab["escalate_to"], "fable")
+
+    def test_saved_defaults(self):
+        from creditopt import runner
+        config.save({"run_defaults": {"preset": "savings", "review": True}})
+        o = runner.resolve_options()
+        self.assertEqual((o["preset"], o["review"], o["self_test"]), ("savings", True, False))
+        self.assertEqual(runner.resolve_options({"preset": "quality"})["escalate"], "opus")
+        self.assertEqual(runner.resolve_options({"escalate": "bogus"})["escalate"], "off")
+
+    def test_detect_test_command(self):
+        from creditopt import runner
+        self.assertEqual(runner.detect_test_command(str(self.repo)), "")
+        (self.repo / "go.mod").write_text("module x")
+        self.assertEqual(runner.detect_test_command(str(self.repo)), "go test ./...")
 
     def test_shell_permission_adds_verifier(self):
         from creditopt import runner

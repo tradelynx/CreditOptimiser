@@ -14,6 +14,7 @@ DEFAULTS = {
     "scan_depth": 4,             # how many folders deep to look for repos
     "auto_escalate": True,       # resume an unfinished run once on the next model up
     "claude_path": "",           # path to the claude command, if it isn't on PATH
+    "run_defaults": {},          # your saved run options (preset + overrides)
 }
 
 
@@ -22,6 +23,12 @@ def coerce(key, value):
     default = DEFAULTS[key]
     if isinstance(default, bool):
         return value if isinstance(value, bool) else str(value).lower() in ("1", "true", "yes", "on")
+    if isinstance(default, dict):
+        if not isinstance(value, dict):
+            value = json.loads(value)
+        if not isinstance(value, dict):
+            raise ValueError("expected an object")
+        return value
     if isinstance(default, list):
         items = value if isinstance(value, list) else str(value).split(",")
         return [str(v).strip() for v in items if str(v).strip()]
