@@ -348,6 +348,11 @@ def parse_event(line):
         out.append({"kind": "start", "model": d.get("model"), "session": d.get("session_id")})
     elif kind == "assistant":
         sub = bool(d.get("parent_tool_use_id"))
+        u = (d.get("message") or {}).get("usage")
+        if u and not sub:
+            out.append({"kind": "usage", "context": (u.get("input_tokens") or 0)
+                        + (u.get("cache_read_input_tokens") or 0)
+                        + (u.get("cache_creation_input_tokens") or 0)})
         for block in (d.get("message") or {}).get("content") or []:
             if block.get("type") == "text" and block.get("text", "").strip():
                 out.append({"kind": "text", "text": block["text"], "sub": sub})
@@ -360,13 +365,19 @@ def parse_event(line):
                     target = inp.get("file_path") or inp.get("pattern") or inp.get("command") or ""
                     out.append({"kind": "tool", "tool": name, "text": str(target)[:160], "sub": sub})
     elif kind == "result":
-        usage = {}
+        usage, tokens = {}, {}
         for mid, u in (d.get("modelUsage") or {}).items():
-            usage[models.family(mid)] = usage.get(models.family(mid), 0) + (u.get("costUSD") or 0)
+            fam = models.family(mid)
+            usage[fam] = usage.get(fam, 0) + (u.get("costUSD") or 0)
+            t = tokens.setdefault(fam, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
+            t["input"] += u.get("inputTokens") or 0
+            t["output"] += u.get("outputTokens") or 0
+            t["cache_read"] += u.get("cacheReadInputTokens") or 0
+            t["cache_write"] += u.get("cacheCreationInputTokens") or 0
         text = d.get("result") or ""
         m = STATUS_RE.search(text)
         out.append({"kind": "result", "ok": not d.get("is_error"), "subtype": d.get("subtype"),
-                    "cost": d.get("total_cost_usd") or 0, "by_model": usage,
+                    "cost": d.get("total_cost_usd") or 0, "by_model": usage, "tokens": tokens,
                     "turns": d.get("num_turns"), "session": d.get("session_id"),
                     "status": (m.group(1).upper() if m else None),
                     "reason": (m.group(2).strip() if m else ""), "text": text})
@@ -381,6 +392,8 @@ class Run:
         self.state = "running"   # running | done | unverified | incomplete | failed | cancelled
         self.cost = 0.0
         self.by_model = {}
+        self.tokens = {}         # family -> token counts, summed over attempts
+        self.peak_context = 0    # largest main-thread context, to judge feasibility
         self.started = datetime.now(timezone.utc).isoformat()
         self.proc = None
         self._lock = threading.Lock()
@@ -392,7 +405,9 @@ class Run:
 
     def snapshot(self, after=0):
         with self._lock:
+            finished = self.state != "running"
             return {"id": self.id, "state": self.state, "plan": self.plan, "cost": round(self.cost, 4),
+                    "comparison": compare(self) if finished and self.tokens else None,
                     "by_model": {k: round(v, 4) for k, v in self.by_model.items()},
                     "started": self.started, "events": self.events[after:], "next": len(self.events)}
 
@@ -405,6 +420,41 @@ class Run:
 RUNS = {}
 
 
+def _price_all(tokens, family):
+    """Cost of the given token volumes if every one had gone through `family`."""
+    m = models.BY_KEY[family]
+    total = {f: sum(t[f] for t in tokens.values()) for f in ("input", "output", "cache_read", "cache_write")}
+    # Claude Code writes its prompt cache with the 1-hour TTL (2x input price).
+    return models.cost(m.model_id, total["input"], total["output"], total["cache_read"], 0, total["cache_write"])
+
+
+def compare(run):
+    """What this run cost, against the same work priced on each single model.
+
+    The alternatives reprice the run's real token volumes. That is the fairest
+    comparison available, but it's an estimate: a different model would have
+    produced a somewhat different amount of work.
+    """
+    lead = run.plan["model"]
+    lead_tier = models.BY_KEY[lead].tier
+    rows = [{"key": "optimiser", "label": "CreditOptimiser (actual)", "cost": round(run.cost, 4),
+             "by_model": {k: round(v, 4) for k, v in run.by_model.items()}, "actual": True, "note": ""}]
+    for m in models.CATALOGUE:
+        note = ""
+        feasible = True
+        if run.peak_context > m.context:
+            feasible = False
+            note = f"not possible: the task needed {run.peak_context // 1000}k tokens of context, over {m.name}'s {m.context // 1000}k"
+        elif m.tier < lead_tier:
+            note = f"likely lower quality: this task was judged to need {models.BY_KEY[lead].name}"
+        rows.append({"key": m.key, "label": f"All on {m.name}", "cost": round(_price_all(run.tokens, m.key), 4),
+                     "actual": False, "feasible": feasible, "note": note})
+    opus = next(r for r in rows if r["key"] == "opus")["cost"]
+    return {"rows": rows, "actual": round(run.cost, 4), "all_opus": opus,
+            "saved_vs_opus": round(opus - run.cost, 4),
+            "saved_pct": round(100 * (opus - run.cost) / opus, 1) if opus else 0}
+
+
 def _attempt(run, cmd):
     """Run one claude process; return its result event (or None)."""
     errfile = tempfile.TemporaryFile(mode="w+")
@@ -413,11 +463,18 @@ def _attempt(run, cmd):
     result = None
     for line in run.proc.stdout:
         for ev in parse_event(line):
+            if ev["kind"] == "usage":
+                run.peak_context = max(run.peak_context, ev["context"])
+                continue
             if ev["kind"] == "result":
                 result = ev
                 run.cost += ev["cost"]
                 for k, v in ev["by_model"].items():
                     run.by_model[k] = run.by_model.get(k, 0) + v
+                for k, t in ev.pop("tokens").items():
+                    acc = run.tokens.setdefault(k, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
+                    for f, n in t.items():
+                        acc[f] += n
             run.emit(ev)
     run.proc.wait()
     run.proc.stdout.close()
@@ -462,7 +519,8 @@ def _log(run):
             fh.write(json.dumps({"id": run.id, "started": run.started, "state": run.state,
                                  "task": run.plan["task"][:300], "repo": run.plan["repo"],
                                  "model": run.plan["model"], "cost": run.cost,
-                                 "by_model": run.by_model}) + "\n")
+                                 "by_model": run.by_model,
+                                 "all_opus": compare(run)["all_opus"] if run.tokens else None}) + "\n")
     except OSError:
         pass
 
@@ -490,6 +548,26 @@ def active_runs():
     live.sort(key=lambda r: r.started, reverse=True)
     return [{"id": r.id, "started": r.started, "state": r.state, "task": r.plan["task"][:300],
              "repo": r.plan["repo"], "model": r.plan["model"], "cost": r.cost} for r in live]
+
+
+def savings_summary():
+    """Total saved by logged runs, compared with running each one all on Opus."""
+    try:
+        lines = (config.config_dir() / "runs.jsonl").read_text().splitlines()
+    except OSError:
+        lines = []
+    runs = actual = opus = 0
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("all_opus") is not None:
+            runs += 1
+            actual += r.get("cost") or 0
+            opus += r["all_opus"]
+    return {"runs": runs, "actual": round(actual, 2), "all_opus": round(opus, 2),
+            "saved": round(opus - actual, 2)}
 
 
 def history(limit=20):

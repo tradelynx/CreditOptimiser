@@ -85,6 +85,14 @@ def cmd_run(args):
         if snap["state"] != "running":
             print(f"\n{snap['state'].upper()} · ${snap['cost']:.2f} · "
                   + ", ".join(f"{k} ${v:.2f}" for k, v in snap["by_model"].items()))
+            cmp = snap.get("comparison")
+            if cmp:
+                print("\nWhat the same work would have cost (estimate: this run's tokens repriced):")
+                for row in cmp["rows"]:
+                    mark = "▶" if row["actual"] else " "
+                    print(f" {mark} {row['label']:<26} ${row['cost']:>7.2f}  {row['note']}")
+                if cmp["saved_vs_opus"] > 0:
+                    print(f"\nSaved ${cmp['saved_vs_opus']:.2f} ({cmp['saved_pct']:.0f}%) compared with running it all on Opus.")
             return
         time.sleep(0.5)
 

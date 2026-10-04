@@ -221,13 +221,15 @@ args = sys.argv[1:]
 model = args[args.index("--model") + 1]
 resumed = "--resume" in args
 print(json.dumps({"type": "system", "subtype": "init", "model": model, "session_id": "sess-1"}))
-print(json.dumps({"type": "assistant", "message": {"content": [
+print(json.dumps({"type": "assistant", "message": {"usage": {"input_tokens": 5, "cache_read_input_tokens": 40000,
+    "cache_creation_input_tokens": 2000}, "content": [
     {"type": "tool_use", "name": "Agent", "input": {"subagent_type": "scout", "description": "find files"}},
     {"type": "tool_use", "name": "Edit", "input": {"file_path": "a.py"}}]}}))
 status = "STATUS: DONE" if resumed else "STATUS: INCOMPLETE: ran out of ideas"
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 3,
                   "total_cost_usd": 0.5, "session_id": "sess-1", "result": "did it\n" + status,
-                  "modelUsage": {"claude-" + model + "-x": {"costUSD": 0.5}}}))
+                  "modelUsage": {"claude-" + model + "-x": {"costUSD": 0.5, "inputTokens": 100, "outputTokens": 10000,
+                                                            "cacheReadInputTokens": 500000, "cacheCreationInputTokens": 50000}}}))
 '''
 
 
@@ -324,6 +326,30 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("agent", kinds)
         self.assertEqual(snap["by_model"], {"haiku": 0.5, "sonnet": 0.5})
         self.assertEqual(runner.history()[0]["state"], "done")
+        cmp = snap["comparison"]
+        rows = {r["key"]: r for r in cmp["rows"]}
+        tokens = dict(input=200, output=20000, cache_read=1_000_000, cache_write=100_000)
+        self.assertAlmostEqual(rows["opus"]["cost"], models.cost("claude-opus-5-5", tokens["input"], tokens["output"],
+                                                                 tokens["cache_read"], 0, tokens["cache_write"]), places=4)
+        self.assertLess(rows["haiku"]["cost"], rows["sonnet"]["cost"])
+        self.assertLess(rows["sonnet"]["cost"], rows["opus"]["cost"])
+        self.assertTrue(rows["optimiser"]["actual"])
+        self.assertEqual(rows["haiku"]["note"], "")  # haiku was the routed model, so no quality warning
+        self.assertEqual(cmp["saved_vs_opus"], round(rows["opus"]["cost"] - 1.0, 4))
+        self.assertEqual(runner.savings_summary()["runs"], 1)
+
+    def test_compare_flags_infeasible_and_lower_quality(self):
+        from creditopt import runner
+        run = runner.Run(runner.plan_run("Design the architecture for migrating auth across the entire monorepo", str(self.repo)))
+        run.cost, run.by_model = 3.0, {"opus": 2.5, "haiku": 0.5}
+        run.tokens = {"opus": {"input": 0, "output": 50_000, "cache_read": 2_000_000, "cache_write": 200_000}}
+        run.peak_context = 350_000
+        rows = {r["key"]: r for r in runner.compare(run)["rows"]}
+        self.assertFalse(rows["haiku"]["feasible"])
+        self.assertIn("not possible", rows["haiku"]["note"])
+        self.assertIn("lower quality", rows["sonnet"]["note"])
+        self.assertTrue(rows["fable"]["feasible"])
+        self.assertEqual(rows["fable"]["note"], "")
 
     def test_active_runs_listed_until_finished(self):
         from creditopt import runner

@@ -78,6 +78,25 @@ python3 -m creditopt run --repo ~/Code/shop --dry-run "…"   # show the plan on
 python3 -m creditopt run --model opus "…"                    # override the model
 ```
 
+**Cost comparison.** When a run finishes, you get a chart (and a table in the terminal)
+comparing what it actually cost with what the same work would have cost on Haiku, Sonnet,
+Opus or Fable alone. Recent runs keeps a running total of savings against all-Opus.
+
+```
+▶ CreditOptimiser (actual)   $0.26
+  All on Haiku 4.5           $0.17  likely lower quality: this task was judged to need Sonnet 5.5
+  All on Sonnet 5.5          $0.34
+  All on Opus 5.5            $0.61
+  All on Fable 5.1           $1.42
+Saved $0.35 (57%) compared with running it all on Opus.
+```
+
+The alternatives are **estimates**: the run's actual token usage priced at each model's
+rates (the same pricing basis Claude Code reports). A different model would have done a
+somewhat different amount of work, so treat them as a guide. Cheaper options than the task
+needed are flagged as likely lower quality. Models whose context window the task outgrew are
+marked "not possible".
+
 The model choice is a heuristic, so it will sometimes be wrong. The retry catches runs where
 the model was too small, and the override is there when you know better. Runs are logged to
 `~/.config/creditopt/runs.jsonl`.
