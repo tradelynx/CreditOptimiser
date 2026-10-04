@@ -191,3 +191,7 @@ can edit files in the repo you pick, and running tests executes that repo's code
 ```bash
 python3 -m unittest discover -s tests
 ```
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
