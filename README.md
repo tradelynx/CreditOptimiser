@@ -10,7 +10,11 @@ goes. It runs each task on the cheapest setup that will still do it well, and te
 > **Individual experiences may vary.** Savings and cost figures are estimates. How much you
 > save depends on your tasks, your repositories and how you work.
 
+[![Fork it](https://img.shields.io/badge/Fork%20it-make%20it%20your%20own-2a78d6?logo=github)](https://github.com/tradelynx/CreditOptimiser/fork)
 [![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support%20this%20project-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/prismprints)
+
+**Free, open source and built to be forked.** Use it as it is, or
+[make your own version](#fork-it-and-make-it-your-own).
 
 ---
 
@@ -331,7 +335,26 @@ python3 -m unittest discover -s tests
 ```
 
 The tests run automatically on macOS, Linux and Windows for every push (GitHub Actions).
-Issues and pull requests are welcome.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for a map of
+the code and how to fork it.
+
+## Fork it and make it your own
+
+CreditOptimiser is designed to be forked. It's a small, dependency-free Python project, with
+the parts you're most likely to want to change kept in one place:
+
+- **Model routing:** teach it your project's vocabulary in `creditopt/router.py`.
+- **Presets:** add your own (a "team" or "weekend project" preset, say) in `creditopt/runner.py`.
+- **Sub-agents:** change what the helpers do, or add new ones.
+- **Prices and models:** one table in `creditopt/models.py`.
+- **Recommendations:** each "where you can save" tip is a small function you can copy.
+- **The dashboard:** a single HTML file with no build step.
+
+**[Fork it on GitHub](https://github.com/tradelynx/CreditOptimiser/fork)**, then read
+[CONTRIBUTING.md](CONTRIBUTING.md). It has a map of the code, a walk-through of each of
+these, how to switch on the free cross-platform tests in your fork, and how to keep your
+fork up to date. If you build something others would like, share it in an
+[issue](https://github.com/tradelynx/CreditOptimiser/issues/new/choose) or send a pull request.
 
 ## Support
 

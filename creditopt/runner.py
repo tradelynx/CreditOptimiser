@@ -110,6 +110,19 @@ PRESETS = {
     "quality": {"priority": "quality", "model": "auto", "subagents": "auto", "self_test": True,
                 "review": True, "escalate": "opus", "access": "edit"},
 }
+# Button label and one-line description for each preset, shown in the dashboard.
+# To add a preset, add an entry to PRESETS and to PRESET_INFO.
+PRESET_INFO = {
+    "savings": {"label": "Max savings",
+                "description": "Cheapest setup that can do the task. No tests, no review, no retries."},
+    "balanced": {"label": "Balanced",
+                 "description": "Routes to the cheapest suitable model, runs your tests, and retries "
+                                "unfinished work on Opus."},
+    "quality": {"label": "Best quality",
+                "description": "Still routes to save credit, but borderline calls go to the stronger "
+                               "model. Your tests are run, an Opus reviewer checks the change, and "
+                               "unfinished work is retried on Opus."},
+}
 OPTION_KEYS = list(PRESETS["quality"]) + ["test_command"]
 CHOICES = {
     "priority": ("savings", "balanced", "quality"),

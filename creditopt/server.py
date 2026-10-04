@@ -128,6 +128,7 @@ def make_handler(claude_dir, token=None):
                                         "viewable": list(runner.RUNS),
                                         "claude": bool(runner.find_claude()),
                                         "presets": runner.PRESETS,
+                                        "preset_info": runner.PRESET_INFO,
                                         "defaults": runner.resolve_options()})
             if url.path.startswith("/api/run/"):
                 run = runner.RUNS.get(url.path.rsplit("/", 1)[-1])

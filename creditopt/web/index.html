@@ -249,12 +249,7 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
       <div class="opts">
         <div class="opts-head">
           <b>How much should the optimiser do?</b>
-          <div class="seg" id="preset">
-            <button type="button" data-preset="savings">Max savings</button>
-            <button type="button" data-preset="balanced">Balanced</button>
-            <button type="button" data-preset="quality">Best quality</button>
-            <button type="button" data-preset="custom" disabled>Custom</button>
-          </div>
+          <div class="seg" id="preset"></div>
         </div>
         <p class="note" id="preset-desc"></p>
         <div class="form">
@@ -741,13 +736,19 @@ function renderEvent(ev) {
 }
 
 // ---- run options
-let PRESETS = {}, OPTS = null;
-const PRESET_DESC = {
-  savings: "Cheapest setup that can do the task. No tests, no review, no retries.",
-  balanced: "Routes to the cheapest suitable model, runs your tests, and retries unfinished work on Opus.",
-  quality: "Still routes to save credit, but borderline calls go to the stronger model. Your tests are run, an Opus reviewer checks the change, and unfinished work is retried on Opus.",
-  custom: "Your own mix of settings.",
-};
+// Presets come from the server (PRESETS and PRESET_INFO in runner.py), so a new
+// preset added there gets its own button here automatically.
+let PRESETS = {}, PRESET_INFO = {}, OPTS = null;
+function renderPresetButtons() {
+  const info = k => PRESET_INFO[k] || { label: k, description: "" };
+  $("#preset").innerHTML = Object.keys(PRESETS).map(k =>
+    `<button type="button" data-preset="${esc(k)}">${esc(info(k).label)}</button>`).join("") +
+    `<button type="button" data-preset="custom" disabled>Custom</button>`;
+  $("#preset").querySelectorAll("button[data-preset]:not([disabled])").forEach(b => b.addEventListener("click", () => {
+    applyOpts({ ...PRESETS[b.dataset.preset], test_command: $("#o-test_command").value.trim() });
+    if ($("#task").value.trim()) preview();
+  }));
+}
 function applyOpts(o) {
   OPTS = { ...o };
   ["model", "priority", "escalate", "access"].forEach(k => $("#o-" + k).value = o[k]);
@@ -773,13 +774,10 @@ function markPreset() {
   const match = Object.keys(PRESETS).find(k => Object.keys(PRESETS[k]).every(f => same(PRESETS[k][f], cur[f])));
   OPTS.preset = match || "custom";
   document.querySelectorAll("#preset button").forEach(b => b.setAttribute("aria-pressed", b.dataset.preset === OPTS.preset));
-  $("#preset-desc").textContent = PRESET_DESC[OPTS.preset];
+  $("#preset-desc").textContent = OPTS.preset === "custom" ? "Your own mix of settings."
+    : (PRESET_INFO[OPTS.preset] || {}).description || "";
 }
 const runOptions = () => ({ ...readOpts(), preset: OPTS.preset === "custom" ? "quality" : OPTS.preset });
-document.querySelectorAll("#preset button[data-preset]:not([disabled])").forEach(b => b.addEventListener("click", () => {
-  applyOpts({ ...PRESETS[b.dataset.preset], test_command: $("#o-test_command").value.trim() });
-  if ($("#task").value.trim()) preview();
-}));
 $("#o-subagents").addEventListener("change", e => {
   $("#o-agent-picks").hidden = e.target.value !== "custom";
   if (e.target.value === "custom") $("#o-agent-picks").querySelectorAll("input").forEach(c => c.checked = c.value !== "implementer");
@@ -793,7 +791,7 @@ $("#save-defaults").addEventListener("click", async () => {
 let FIRST_HISTORY = true, ACTIVE_TIMER = null;
 async function loadHistory() {
   const h = await (await fetch("/api/runs")).json();
-  if (!OPTS) { PRESETS = h.presets; applyOpts(h.defaults); }
+  if (!OPTS) { PRESETS = h.presets; PRESET_INFO = h.preset_info || {}; renderPresetButtons(); applyOpts(h.defaults); }
   if (!h.claude) $("#run-msg").textContent = `The claude command wasn't found. Install Claude Code, or tell CreditOptimiser where it is: ${DATA ? DATA.platform.python : "python3"} -m creditopt config --set claude_path=/full/path/to/claude`;
   // Reconnect to a run that was going before this page loaded.
   if (FIRST_HISTORY && h.active.length && RUN_ID === null) attach(h.active[0].id);

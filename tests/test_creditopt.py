@@ -360,6 +360,12 @@ class RunnerTest(unittest.TestCase):
         fab = runner.plan_run(task, str(self.repo), options={"model": "opus", "escalate": "fable"})
         self.assertEqual(fab["escalate_to"], "fable")
 
+    def test_every_preset_has_a_label(self):
+        from creditopt import runner
+        self.assertEqual(set(runner.PRESETS), set(runner.PRESET_INFO))
+        for info in runner.PRESET_INFO.values():
+            self.assertTrue(info["label"] and info["description"])
+
     def test_saved_defaults(self):
         from creditopt import runner
         config.save({"run_defaults": {"preset": "savings", "review": True}})
