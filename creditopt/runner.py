@@ -484,6 +484,14 @@ def start(task, repo, model=None, options=None):
     return run
 
 
+def active_runs():
+    """Runs still in progress, newest first, so a reloaded page can reconnect."""
+    live = [r for r in RUNS.values() if r.state == "running"]
+    live.sort(key=lambda r: r.started, reverse=True)
+    return [{"id": r.id, "started": r.started, "state": r.state, "task": r.plan["task"][:300],
+             "repo": r.plan["repo"], "model": r.plan["model"], "cost": r.cost} for r in live]
+
+
 def history(limit=20):
     try:
         lines = (config.config_dir() / "runs.jsonl").read_text().splitlines()

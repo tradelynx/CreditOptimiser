@@ -325,6 +325,21 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(snap["by_model"], {"haiku": 0.5, "sonnet": 0.5})
         self.assertEqual(runner.history()[0]["state"], "done")
 
+    def test_active_runs_listed_until_finished(self):
+        from creditopt import runner
+        fake = Path(self.tmp.name) / "claude"
+        fake.write_text(FAKE_CLAUDE.replace("import json, sys", "import json, sys, time\ntime.sleep(0.5)"))
+        fake.chmod(0o755)
+        config.save({"claude_path": str(fake)})
+        run = runner.start("rename foo to bar in a.py", str(self.repo), options={"escalate": "off"})
+        self.assertIn(run.id, [r["id"] for r in runner.active_runs()])
+        for _ in range(100):
+            if run.state != "running":
+                break
+            time.sleep(0.05)
+        self.assertNotIn(run.id, [r["id"] for r in runner.active_runs()])
+        self.assertEqual(runner.history()[0]["id"], run.id)
+
     def test_start_validates(self):
         from creditopt import runner
         with self.assertRaises(ValueError):

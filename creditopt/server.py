@@ -117,6 +117,8 @@ def make_handler(claude_dir, token=None):
         def _get_api(self, url):
             if url.path == "/api/runs":
                 return self._send(200, {"history": runner.history(),
+                                        "active": runner.active_runs(),
+                                        "viewable": list(runner.RUNS),
                                         "claude": bool(runner.find_claude()),
                                         "presets": runner.PRESETS,
                                         "defaults": runner.resolve_options()})

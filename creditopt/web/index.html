@@ -607,7 +607,7 @@ function renderRunWhere() {
   $("#run-where").innerHTML = REPO
     ? `Runs in <b>${esc(repoName())}</b> <span class="note">(${esc(REPO)})</span>. Claude Code may read and edit files there; shell commands are refused unless that repo's Claude Code settings allow them. Review the changes with <code>git diff</code> afterwards.`
     : `Pick a <b>repository</b> at the top of the page to run tasks in it.`;
-  $("#run-btn").disabled = !REPO || RUN_ID !== null;
+  $("#run-btn").disabled = !REPO || (RUN_ID !== null && !$("#cancel-btn").hidden);
 }
 
 async function preview() {
@@ -641,15 +641,29 @@ async function startRun() {
   const res = await post("/api/run", { task, repo: REPO, options: runOptions() });
   const out = await res.json();
   if (!res.ok) { $("#run-msg").textContent = out.error; return; }
-  RUN_ID = out.id; RUN_NEXT = 0; $("#run-msg").textContent = "";
-  $("#run-panel").innerHTML = `<div class="runbar"><span class="pill running" id="run-state">running</span><span class="note" id="run-cost"></span></div><div class="log" id="run-log"></div>`;
-  $("#cancel-btn").hidden = false; renderRunWhere();
+  $("#run-msg").textContent = "";
+  attach(out.id);
+}
+
+// Show a run's log in the panel. Replays every event from the start, so it
+// works for a run started before this page was (re)loaded.
+function attach(id) {
+  clearTimeout(RUN_TIMER);
+  RUN_ID = id; RUN_NEXT = 0;
+  $("#run-panel").innerHTML = `<div class="runbar"><span class="pill running" id="run-state">running</span>
+    <span class="note" id="run-cost"></span></div><div class="note" id="run-title"></div><div class="log" id="run-log"></div>`;
+  renderRunWhere();
   poll();
 }
 $("#cancel-btn").addEventListener("click", () => RUN_ID && post(`/api/run/${RUN_ID}/cancel`, {}));
 
 async function poll() {
-  const snap = await (await fetch(`/api/run/${RUN_ID}?after=${RUN_NEXT}`)).json();
+  const id = RUN_ID;
+  const res = await fetch(`/api/run/${id}?after=${RUN_NEXT}`);
+  if (id !== RUN_ID) return;  // switched to another run meanwhile
+  if (!res.ok) { RUN_ID = null; $("#run-panel").innerHTML = `<p class="note">That run is no longer available (the server was restarted).</p>`; renderRunWhere(); return; }
+  const snap = await res.json();
+  if (RUN_NEXT === 0) $("#run-title").innerHTML = `${esc(snap.plan.task)} <span class="note">· ${esc(snap.plan.repo.split(/[\\/]/).filter(Boolean).pop())} · started ${new Date(snap.started).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>`;
   RUN_NEXT = snap.next;
   const log = $("#run-log"), stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
   for (const ev of snap.events) log.insertAdjacentHTML("beforeend", renderEvent(ev));
@@ -657,8 +671,10 @@ async function poll() {
   $("#run-state").className = `pill ${snap.state}`;
   $("#run-state").textContent = { unverified: "done, not tested" }[snap.state] || snap.state;
   $("#run-cost").textContent = snap.cost ? `${money(snap.cost)} · ` + Object.entries(snap.by_model).map(([k, v]) => `${NAMES[k] || k} ${money(v)}`).join(", ") : "";
+  $("#cancel-btn").hidden = snap.state !== "running";
+  renderRunWhere();
   if (snap.state === "running") { RUN_TIMER = setTimeout(poll, 800); return; }
-  RUN_ID = null; $("#cancel-btn").hidden = true; renderRunWhere(); loadHistory(); load();
+  RUN_ID = null; renderRunWhere(); loadHistory(); load();
 }
 
 function renderEvent(ev) {
@@ -725,17 +741,34 @@ $("#save-defaults").addEventListener("click", async () => {
   $("#defaults-msg").textContent = res.ok ? "Saved. New runs start with these settings." : "Couldn't save.";
 });
 
+let FIRST_HISTORY = true, ACTIVE_TIMER = null;
 async function loadHistory() {
   const h = await (await fetch("/api/runs")).json();
   if (!OPTS) { PRESETS = h.presets; applyOpts(h.defaults); }
   if (!h.claude) $("#run-msg").textContent = "The claude command wasn't found. Install Claude Code, or set claude_path in settings.";
-  $("#run-history").innerHTML = h.history.length
-    ? `<thead><tr><th>When</th><th>Task</th><th>Repository</th><th>Lead</th><th>Result</th><th class="num">Cost</th></tr></thead><tbody>` +
-      h.history.map(r => `<tr><td>${new Date(r.started).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+  // Reconnect to a run that was going before this page loaded.
+  if (FIRST_HISTORY && h.active.length && RUN_ID === null) attach(h.active[0].id);
+  FIRST_HISTORY = false;
+  const tab = document.querySelector('nav [data-tab="router"]');
+  tab.textContent = h.active.length ? "Run a task ●" : "Run a task";
+  tab.title = h.active.length ? `${h.active.length} run(s) in progress` : "";
+  const rows = [...h.active, ...h.history.filter(r => !h.active.some(a => a.id === r.id))];
+  const viewable = new Set(h.viewable);
+  $("#run-history").innerHTML = rows.length
+    ? `<thead><tr><th>When</th><th>Task</th><th>Repository</th><th>Lead</th><th>Result</th><th class="num">Cost</th><th></th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td>${new Date(r.started).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
         <td class="title" title="${esc(r.task)}">${esc(r.task)}</td><td>${esc(r.repo.split(/[\\/]/).filter(Boolean).pop())}</td>
         <td class="model"><span class="dot" style="background:${color(r.model)}"></span>${NAMES[r.model]}</td>
-        <td><span class="pill ${r.state}">${{ unverified: "done, not tested" }[r.state] || r.state}</span></td><td class="num">${money(r.cost)}</td></tr>`).join("") + "</tbody>"
+        <td><span class="pill ${r.state}">${{ unverified: "done, not tested" }[r.state] || r.state}</span></td><td class="num">${money(r.cost)}</td>
+        <td>${viewable.has(r.id) ? `<button class="btn ghost view-run" type="button" data-id="${esc(r.id)}">View</button>` : ""}</td></tr>`).join("") + "</tbody>"
     : `<tbody><tr><td class="note">No runs yet.</td></tr></tbody>`;
+  $("#run-history").querySelectorAll(".view-run").forEach(b => b.addEventListener("click", () => {
+    attach(b.dataset.id);
+    $("#run-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  // Keep the list and the tab marker fresh while anything is running.
+  clearTimeout(ACTIVE_TIMER);
+  if (h.active.length) ACTIVE_TIMER = setTimeout(loadHistory, 5000);
 }
 loadHistory();
 
