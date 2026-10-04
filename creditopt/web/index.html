@@ -317,6 +317,7 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
       <ol class="steps">
         <li><b>Context guard hook:</b> warns you before each prompt once context nears your budget, when you return to a cold cache, and when a trivial prompt is about to go to Opus.</li>
         <li><b>Status line:</b> a live context meter that turns amber, then red, as compaction becomes due.</li>
+        <li><b>Automatic compaction:</b> Claude Code compacts by itself when a conversation reaches your compact budget, instead of waiting until it's nearly full. Changing the budget below updates it; removing the add-ons restores Claude Code's default.</li>
         <li><b>Cost-aware subagents:</b> <code>scout</code> (Haiku, exploration), <code>runner</code> (Haiku, tests/builds) and <code>architect</code> (Opus, design advice for Sonnet sessions).</li>
       </ol>
       <p class="note" id="install-scope"></p>
@@ -333,7 +334,7 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
       <h2>Settings</h2>
       <p class="desc">Used by the dashboard, the hook and the status line. Saved to ~/.config/creditopt/config.json.</p>
       <form class="form" id="settings">
-        <div><label for="context_budget">Compact budget (tokens)</label><input type="number" id="context_budget" min="20000" step="10000"></div>
+        <div><label for="context_budget">Compact budget (tokens). With the add-ons installed, Claude Code auto-compacts here (100k minimum)</label><input type="number" id="context_budget" min="20000" step="10000"></div>
         <div><label for="warn_ratio">Warn at fraction of budget</label><input type="number" id="warn_ratio" min="0.3" max="0.95" step="0.05"></div>
         <div><label for="idle_minutes">Cold-cache warning after (minutes)</label><input type="number" id="idle_minutes" min="5" step="5"></div>
         <div><label for="repo_roots">Folders to scan for repositories (comma-separated; blank = home folder)</label><input type="text" id="repo_roots" placeholder="~/Code, ~/Projects"></div>

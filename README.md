@@ -224,16 +224,26 @@ Then restart Claude Code. This adds:
   expensive, when you're resuming a big session after a break, and when a trivial prompt is
   about to go to Opus. You can optionally have it hold the first prompt past your budget so
   you can `/compact` first.
+- **Automatic compaction at your budget.** Claude Code normally only compacts on its own
+  when a conversation is nearly full, which on current models is close to 1 million tokens.
+  The add-ons set Claude Code's auto-compact point to your compact budget (150k by
+  default). Changing the budget updates it. If you'd already chosen your own value with
+  `/autocompact`, it's left alone.
 - **A status line:** `Opus 5.5 · ctx ███████░░░ 104k/150k → compact soon`
 - **Cheap helper agents** (`scout`, `runner`, `architect`) for your normal Claude Code sessions.
 
 Pick a repository first to install for that repository only. Otherwise the add-ons apply to
 all of Claude Code. Your existing status line and agent files are never overwritten, and
 your settings file is backed up first. `python3 -m creditopt install --uninstall` removes
-the hook and status line.
+the hook, the status line and the auto-compact setting.
 
-> Claude Code doesn't let add-ons run `/compact` or switch models themselves, so these
-> tell you when to, and the fix is one command away.
+> Compacting happens automatically, but `/clear` can't: only you know when you've switched
+> tasks, and Claude Code doesn't let add-ons run it. The add-on tells you when it would help.
+> Tasks started from **Run a task** always begin with a fresh session anyway.
+>
+> To steer what's kept when it compacts, add a `# Compact Instructions` section to your
+> repository's `CLAUDE.md`, for example: "When compacting, keep the files changed, the
+> decisions made and the test commands."
 
 ## Terminal commands
 
@@ -254,7 +264,7 @@ Change these in **Setup → Settings**, or with `python3 -m creditopt config --s
 
 | Setting | Default | What it does |
 |---|---|---|
-| `context_budget` | 150000 | Compact before a session's context passes this many tokens |
+| `context_budget` | 150000 | Compact before a session's context passes this many tokens. With the add-ons installed, Claude Code auto-compacts here (100k–1M) |
 | `warn_ratio` | 0.7 | Give an early warning at this fraction of the budget |
 | `idle_minutes` | 60 | Warn about an expired cache after this much idle time |
 | `block_over_budget` | false | Hold the first prompt sent past the budget |

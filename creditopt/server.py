@@ -55,7 +55,7 @@ def report(claude_dir=None, days=30, repo=None, rescan=False):
 
 TOKEN_HEADER = "X-CreditOpt-Token"
 # Settings the browser may never change: they decide which program gets run.
-LOCKED_SETTINGS = {"claude_path"}
+LOCKED_SETTINGS = {"claude_path", "autocompact_managed"}
 PAGE_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; "
                                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "

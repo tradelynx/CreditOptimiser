@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from . import config
 from .transcripts import default_claude_dir
 
 MARKER = "creditopt"
@@ -107,6 +108,52 @@ def targets(claude_dir=None, repo=None):
     return base / "settings.json", base / "agents"
 
 
+# --- Claude Code's own auto-compaction -----------------------------------------
+#
+# Claude Code compacts automatically when context reaches its auto-compact
+# window (setting `autoCompactWindow`, 100k-1M tokens). By default that's near
+# the model's full window, so it rarely fires. We set it to the user's compact
+# budget, and remember what we set so we only ever change or remove our own value.
+
+AUTOCOMPACT_KEY = "autoCompactWindow"
+AUTOCOMPACT_MIN, AUTOCOMPACT_MAX = 100_000, 1_000_000
+
+
+def autocompact_value(budget):
+    """The compact budget, kept inside the range Claude Code accepts."""
+    return max(AUTOCOMPACT_MIN, min(AUTOCOMPACT_MAX, int(budget)))
+
+
+def _managed():
+    return dict(config.load().get("autocompact_managed") or {})
+
+
+def _autocompact_action(settings, settings_path):
+    current = settings.get(AUTOCOMPACT_KEY)
+    want = autocompact_value(config.load()["context_budget"])
+    ours = _managed().get(str(settings_path))
+    if current is None or current == ours:
+        return "skip (already set)" if current == want else "set", want
+    return f"skip (you set it to {current} yourself)", want
+
+
+def sync_autocompact():
+    """Update every auto-compact value we set to match the current budget."""
+    want = autocompact_value(config.load()["context_budget"])
+    managed = _managed()
+    for path, ours in list(managed.items()):
+        p = Path(path)
+        settings = _load_settings(p)
+        if settings.get(AUTOCOMPACT_KEY) != ours:
+            managed.pop(path)  # changed or removed by someone else: no longer ours
+            continue
+        if ours != want:
+            settings[AUTOCOMPACT_KEY] = want
+            p.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+            managed[path] = want
+    config.save({"autocompact_managed": managed}, sync=False)
+
+
 def plan(claude_dir=None, force_statusline=False, repo=None):
     """List the changes `apply` would make, without touching anything."""
     settings_path, agents_dir = targets(claude_dir, repo)
@@ -128,6 +175,9 @@ def plan(claude_dir=None, force_statusline=False, repo=None):
         sl = "set"
     steps.append({"what": "status line (context meter)", "path": str(settings_path),
                   "action": sl})
+    action, want = _autocompact_action(settings, settings_path)
+    steps.append({"what": f"Claude Code auto-compact at {want // 1000}k tokens",
+                  "path": str(settings_path), "action": action})
     return steps
 
 
@@ -155,15 +205,22 @@ def apply(claude_dir=None, force_statusline=False, repo=None):
     else:
         settings.setdefault("hooks", {}).setdefault("UserPromptSubmit", []).append(
             {"hooks": [{"type": "command", "command": _python_cmd("hook"), "timeout": 10}]})
-    if steps[-1]["action"] == "set" or MARKER in settings.get("statusLine", {}).get("command", ""):
+    status_step = next(s for s in steps if s["what"].startswith("status line"))
+    if status_step["action"] == "set" or MARKER in settings.get("statusLine", {}).get("command", ""):
         settings["statusLine"] = {"type": "command", "command": _python_cmd("statusline")}
+    action, want = _autocompact_action(settings, settings_path)
+    if not action.startswith("skip (you"):
+        settings[AUTOCOMPACT_KEY] = want
+        managed = _managed()
+        managed[str(settings_path)] = want
+        config.save({"autocompact_managed": managed}, sync=False)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return steps
 
 
 def uninstall(claude_dir=None, repo=None):
-    """Remove our hook and status line. Subagent files are left for you to delete."""
+    """Remove our hook, status line and auto-compact value. Subagent files are left for you to delete."""
     settings_path, agents_dir = targets(claude_dir, repo)
     settings = _load_settings(settings_path)
     groups = settings.get("hooks", {}).get("UserPromptSubmit", [])
@@ -179,6 +236,11 @@ def uninstall(claude_dir=None, repo=None):
             settings["hooks"].pop("UserPromptSubmit", None)
     if MARKER in settings.get("statusLine", {}).get("command", ""):
         settings.pop("statusLine")
+    managed = _managed()
+    ours = managed.pop(str(settings_path), None)
+    if ours is not None and settings.get(AUTOCOMPACT_KEY) == ours:
+        settings.pop(AUTOCOMPACT_KEY)  # back to Claude Code's default
+    config.save({"autocompact_managed": managed}, sync=False)
     if settings_path.exists():
         settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return [str(agents_dir / f"{n}.md") for n in AGENTS]

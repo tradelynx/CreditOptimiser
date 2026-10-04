@@ -173,6 +173,52 @@ class HookTest(unittest.TestCase):
 
 
 class InstallerTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = tempfile.TemporaryDirectory()
+        self.addCleanup(self.cfg.cleanup)
+        patcher = mock.patch.dict("os.environ", {"XDG_CONFIG_HOME": self.cfg.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def settings(self, d, name="settings.json"):
+        return json.loads((Path(d) / name).read_text(encoding="utf-8"))
+
+    def test_autocompact_follows_budget(self):
+        with tempfile.TemporaryDirectory() as d:
+            installer.apply(d)
+            self.assertEqual(self.settings(d)["autoCompactWindow"], 150_000)
+            config.save({"context_budget": 120_000})          # budget change syncs
+            self.assertEqual(self.settings(d)["autoCompactWindow"], 120_000)
+            config.save({"context_budget": 50_000})           # below Claude Code's minimum
+            self.assertEqual(self.settings(d)["autoCompactWindow"], 100_000)
+            installer.uninstall(d)                            # back to Claude Code's default
+            self.assertNotIn("autoCompactWindow", self.settings(d))
+
+    def test_autocompact_respects_users_own_value(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "settings.json").write_text(json.dumps({"autoCompactWindow": 300_000}), encoding="utf-8")
+            step = installer.plan(d)[-1]
+            self.assertIn("yourself", step["action"])
+            installer.apply(d)
+            config.save({"context_budget": 120_000})
+            installer.uninstall(d)
+            self.assertEqual(self.settings(d)["autoCompactWindow"], 300_000)
+
+    def test_autocompact_stops_tracking_after_user_edit(self):
+        with tempfile.TemporaryDirectory() as d:
+            installer.apply(d)
+            data = self.settings(d)
+            data["autoCompactWindow"] = 400_000               # user changes it by hand
+            (Path(d) / "settings.json").write_text(json.dumps(data), encoding="utf-8")
+            config.save({"context_budget": 120_000})
+            self.assertEqual(self.settings(d)["autoCompactWindow"], 400_000)
+
+    def test_autocompact_per_repo(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as repo:
+            installer.apply(home, repo=repo)
+            self.assertEqual(self.settings(Path(repo) / ".claude", "settings.local.json")["autoCompactWindow"], 150_000)
+            self.assertEqual(list(Path(home).iterdir()), [])
+
     def test_apply_is_idempotent_and_preserves_settings(self):
         with tempfile.TemporaryDirectory() as d:
             settings = Path(d) / "settings.json"

@@ -15,6 +15,7 @@ DEFAULTS = {
     "auto_escalate": True,       # resume an unfinished run once on the next model up
     "claude_path": "",           # path to the claude command, if it isn't on PATH
     "run_defaults": {},          # your saved run options (preset + overrides)
+    "autocompact_managed": {},   # settings files where we set Claude Code's auto-compact
 }
 
 
@@ -71,10 +72,16 @@ def load():
     return cfg
 
 
-def save(updates):
+def save(updates, sync=True):
     cfg = load()
+    budget_changed = "context_budget" in updates and updates["context_budget"] != cfg["context_budget"]
     cfg.update({k: v for k, v in updates.items() if k in DEFAULTS})
     path = config_dir() / "config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    if sync and budget_changed:
+        # Keep Claude Code's auto-compact in step with the budget.
+        from . import installer
+        installer.sync_autocompact()
+        cfg = load()
     return cfg
