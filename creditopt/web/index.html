@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CreditOptimiser</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --raised: #ffffff;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --accent: #2a78d6;
+  --opus: #2a78d6; --sonnet: #eb6834; --haiku: #1baf7a; --fable: #eda100; --other: #a8a69f;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --good-ink: #006300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --raised: #222221;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --accent: #3987e5;
+    --opus: #3987e5; --sonnet: #d95926; --haiku: #199e70; --fable: #c98500; --other: #6b6a65;
+    --good-ink: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --raised: #222221;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --accent: #3987e5;
+  --opus: #3987e5; --sonnet: #d95926; --haiku: #199e70; --fable: #c98500; --other: #6b6a65;
+  --good-ink: #0ca30c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+header .sub { color: var(--muted); font-size: 13px; }
+nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+nav button, .seg button { border: 1px solid transparent; background: none; color: var(--ink-2);
+  padding: 6px 12px; border-radius: 8px; font: inherit; cursor: pointer; }
+nav button[aria-selected="true"] { background: var(--raised); border-color: var(--border); color: var(--ink); font-weight: 600; }
+main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+section[hidden] { display: none; }
+.toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; padding: 2px; background: var(--surface); }
+.seg button[aria-pressed="true"] { background: var(--raised); color: var(--ink); font-weight: 600; border-color: var(--border); }
+.note { color: var(--muted); font-size: 12.5px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.tile, .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.tile .label { color: var(--ink-2); font-size: 12.5px; }
+.tile .value { font-size: 26px; font-weight: 650; margin-top: 2px; }
+.tile .foot { color: var(--muted); font-size: 12px; }
+.tile .value.good { color: var(--good-ink); }
+.grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 20px; }
+@media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } main { padding: 16px; } header { padding: 12px 16px; } }
+.card h2 { font-size: 14px; margin: 0 0 4px; font-weight: 650; }
+.card .desc { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); margin-bottom: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart { position: relative; }
+.tip { position: absolute; pointer-events: none; background: var(--raised); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12); white-space: nowrap; z-index: 5; display: none; }
+.tip b { font-weight: 600; }
+.tip .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.hbar { display: grid; grid-template-columns: 76px 1fr 64px; gap: 8px; align-items: center; margin: 8px 0; font-size: 13px; }
+.hbar .track { height: 10px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.hbar .fill { height: 100%; border-radius: 0 4px 4px 0; }
+.hbar .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.recs { display: grid; gap: 10px; }
+.rec { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
+.badge { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.badge::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.badge.high::before { background: var(--critical); } .badge.medium::before { background: var(--warning); } .badge.low::before { background: var(--good); }
+.rec h3 { margin: 0; font-size: 14px; }
+.rec p { margin: 4px 0 0; color: var(--ink-2); }
+.rec .act { margin-top: 6px; color: var(--ink); }
+.rec .save { font-weight: 650; text-align: right; white-space: nowrap; }
+.rec .save small { display: block; font-weight: 400; color: var(--muted); font-size: 11.5px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+  background: var(--page); border: 1px solid var(--border); padding: 1px 5px; border-radius: 5px; }
+pre { background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
+pre code { border: 0; padding: 0; background: none; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+th { color: var(--ink-2); font-weight: 600; font-size: 12px; cursor: pointer; user-select: none; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.model { white-space: nowrap; }
+td.title { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.meter { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.meter .track { position: relative; flex: 1; height: 8px; background: var(--grid); border-radius: 4px; }
+.meter .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.meter .mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink-2); }
+.meter span { font-variant-numeric: tabular-nums; color: var(--ink-2); width: 44px; text-align: right; }
+textarea, input[type=number], input[type=text] { width: 100%; font: inherit; color: var(--ink); background: var(--raised);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+textarea { min-height: 96px; resize: vertical; }
+.btn { font: inherit; font-weight: 600; background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+.btn.ghost { background: none; color: var(--ink); border: 1px solid var(--border); }
+.examples { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.examples button { font: inherit; font-size: 12.5px; background: var(--surface); color: var(--ink-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+.route-result { margin-top: 16px; }
+.route-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.route-head .model { font-size: 22px; font-weight: 650; }
+.ladder { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+.ladder div { border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 12.5px; color: var(--ink-2); }
+.ladder div.on { border: 2px solid var(--accent); color: var(--ink); }
+.ladder b { display: block; color: var(--ink); font-size: 13.5px; }
+@media (max-width: 640px) {
+  .ladder { grid-template-columns: repeat(2, 1fr); }
+  .rec { grid-template-columns: 1fr auto; grid-template-areas: "badge save" "body body"; }
+  .rec .badge { grid-area: badge; justify-self: start; } .rec .save { grid-area: save; } .rec > div:not(.save) { grid-area: body; }
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chips span { font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; color: var(--ink-2); }
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.form label { display: block; font-size: 12.5px; color: var(--ink-2); margin-bottom: 4px; }
+.check { display: flex; gap: 8px; align-items: flex-start; }
+.check input { margin-top: 4px; }
+.steps li { margin: 6px 0; }
+.empty { text-align: center; padding: 48px 16px; color: var(--ink-2); }
+.copy { margin-left: 6px; font-size: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>CreditOptimiser</h1>
+    <div class="sub" id="range">Loading your Claude Code usage…</div>
+  </div>
+  <nav role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+    <button role="tab" data-tab="sessions" aria-selected="false">Sessions</button>
+    <button role="tab" data-tab="router" aria-selected="false">Task router</button>
+    <button role="tab" data-tab="setup" aria-selected="false">Setup</button>
+  </nav>
+</header>
+<main>
+  <section id="overview">
+    <div class="toolbar">
+      <div class="seg" id="days">
+        <button data-days="7">7 days</button>
+        <button data-days="30" aria-pressed="true">30 days</button>
+        <button data-days="90">90 days</button>
+        <button data-days="0">All</button>
+      </div>
+      <span class="note">Figures are API-equivalent cost. On Pro/Max you don't pay these, but your usage limits scale with the same compute.</span>
+    </div>
+    <div class="tiles" id="tiles"></div>
+    <div class="card" style="margin-bottom:20px">
+      <h2>Where you can save</h2>
+      <p class="desc">Estimates of what the same work would have cost if done the recommended way.</p>
+      <div class="recs" id="recs"></div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h2>Daily usage by model</h2>
+        <p class="desc">API-equivalent cost per day.</p>
+        <div class="legend" id="daily-legend"></div>
+        <div class="chart" id="daily"></div>
+      </div>
+      <div class="card">
+        <h2>Share by model</h2>
+        <p class="desc">Of total cost in this period.</p>
+        <div id="by-model"></div>
+        <h2 style="margin-top:20px">Top projects</h2>
+        <div id="by-project"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sessions" hidden>
+    <div class="card">
+      <h2>Sessions</h2>
+      <p class="desc">The meter shows each session's peak context; the tick marks your compact budget. Click a column to sort.</p>
+      <div class="tablewrap"><table id="session-table"></table></div>
+    </div>
+  </section>
+
+  <section id="router" hidden>
+    <div class="card">
+      <h2>Which model should do this?</h2>
+      <p class="desc">Describe the task. The router picks the cheapest model likely to do it well and explains why. It runs locally and is free.</p>
+      <textarea id="task" placeholder="e.g. Add pagination to the /orders endpoint and update its tests"></textarea>
+      <div class="examples" id="examples"></div>
+      <button class="btn" id="route-btn">Recommend a model</button>
+      <div class="route-result" id="route-result"></div>
+    </div>
+  </section>
+
+  <section id="setup" hidden>
+    <div class="card" style="margin-bottom:12px">
+      <h2>Automate it inside Claude Code</h2>
+      <p class="desc">One command wires three things into Claude Code. It's a dry run unless you add <code>--apply</code>, and settings.json is backed up first.</p>
+      <ol class="steps">
+        <li><b>Context guard hook:</b> warns you before each prompt once context nears your budget, when you return to a cold cache, and when a trivial prompt is about to go to Opus.</li>
+        <li><b>Status line:</b> a live context meter that turns amber, then red, as compaction becomes due.</li>
+        <li><b>Cost-aware subagents:</b> <code>scout</code> (Haiku, exploration), <code>runner</code> (Haiku, tests/builds) and <code>architect</code> (Opus, design advice for Sonnet sessions).</li>
+      </ol>
+      <pre><code id="install-cmd">python3 -m creditopt install --apply</code></pre>
+      <div class="tablewrap"><table id="plan-table"></table></div>
+    </div>
+    <div class="card">
+      <h2>Settings</h2>
+      <p class="desc">Used by the dashboard, the hook and the status line. Saved to ~/.config/creditopt/config.json.</p>
+      <form class="form" id="settings">
+        <div><label for="context_budget">Compact budget (tokens)</label><input type="number" id="context_budget" min="20000" step="10000"></div>
+        <div><label for="warn_ratio">Warn at fraction of budget</label><input type="number" id="warn_ratio" min="0.3" max="0.95" step="0.05"></div>
+        <div><label for="idle_minutes">Cold-cache warning after (minutes)</label><input type="number" id="idle_minutes" min="5" step="5"></div>
+        <div class="check"><input type="checkbox" id="block_over_budget"><label for="block_over_budget">Hold the first prompt sent past the budget, so you can /compact first</label></div>
+        <div class="check"><input type="checkbox" id="route_nudges"><label for="route_nudges">Suggest a cheaper model when a trivial prompt goes to Opus/Fable</label></div>
+        <div><button class="btn" type="submit">Save settings</button> <span class="note" id="saved"></span></div>
+      </form>
+    </div>
+  </section>
+</main>
+<div class="tip" id="tip" role="tooltip"></div>
+<script>
+const FAMILIES = ["opus", "sonnet", "haiku", "fable", "other"];
+const NAMES = { opus: "Opus", sonnet: "Sonnet", haiku: "Haiku", fable: "Fable", other: "Other" };
+const color = f => `var(--${f})`;
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = v => v >= 100 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`;
+const ktok = v => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : `${Math.round(v / 1e3)}k`;
+const day = iso => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+let DATA = null, DAYS = 30;
+try { DAYS = Number(localStorage.getItem("co-days") ?? 30); } catch (e) {}
+
+// ---- tabs
+document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("nav button").forEach(x => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll("main section").forEach(s => s.hidden = s.id !== b.dataset.tab);
+}));
+document.querySelectorAll("#days button").forEach(b => {
+  b.setAttribute("aria-pressed", Number(b.dataset.days) === DAYS);
+  b.addEventListener("click", () => {
+    DAYS = Number(b.dataset.days);
+    try { localStorage.setItem("co-days", DAYS); } catch (e) {}
+    document.querySelectorAll("#days button").forEach(x => x.setAttribute("aria-pressed", x === b));
+    load();
+  });
+});
+
+// ---- tooltip
+const tip = $("#tip");
+function showTip(html, ev) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const pad = 14, r = tip.getBoundingClientRect();
+  let x = ev.clientX + pad, y = ev.clientY + pad;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - pad;
+  tip.style.left = `${x + scrollX}px`; tip.style.top = `${y + scrollY}px`;
+}
+const hideTip = () => tip.style.display = "none";
+
+async function load() {
+  const res = await fetch(`/api/report?days=${DAYS}`);
+  DATA = await res.json();
+  render();
+}
+
+function render() {
+  const t = DATA.totals;
+  $("#range").textContent = t.first
+    ? `${t.sessions} sessions · ${day(t.first)} – ${day(t.last)}`
+    : "No Claude Code usage found in this period";
+  renderTiles(t); renderRecs(); renderDaily(); renderShares(); renderSessions(); renderSetup();
+}
+
+function renderTiles(t) {
+  const hit = Math.round(t.cache_hit_rate * 100);
+  const tiles = [
+    ["API-equivalent usage", money(t.cost), `${t.calls.toLocaleString()} requests`],
+    ["Potential saving", money(t.potential_saving), t.cost ? `${Math.round(100 * t.potential_saving / t.cost)}% of usage` : "", t.potential_saving > 0 ? "" : "good"],
+    ["Busiest 5-hour window", money(t.peak_5h_window.cost), t.peak_5h_window.start ? `from ${new Date(t.peak_5h_window.start).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Limits reset on a 5-hour cycle"],
+    ["Cache hit rate", `${hit}%`, hit >= 85 ? "Healthy: most context is re-read cheaply" : "Low: context is being rebuilt often", hit >= 85 ? "good" : ""],
+    ["Output tokens", ktok(t.tokens.output), `${ktok(t.tokens.cache_read)} read from cache`],
+  ];
+  $("#tiles").innerHTML = tiles.map(([l, v, f, cls]) =>
+    `<div class="tile"><div class="label">${l}</div><div class="value ${cls || ""}">${v}</div><div class="foot">${esc(f)}</div></div>`).join("");
+}
+
+function renderRecs() {
+  const recs = DATA.recommendations;
+  if (!recs.length) {
+    $("#recs").innerHTML = `<div class="note">Nothing to flag in this period. Your sessions are lean.</div>`;
+    return;
+  }
+  $("#recs").innerHTML = recs.map(r => `
+    <div class="rec card">
+      <span class="badge ${r.severity}">${r.severity}</span>
+      <div><h3>${esc(r.title)}</h3><p>${esc(r.detail)}</p><p class="act"><b>Do this:</b> ${fmtAction(r.action)}</p></div>
+      <div class="save">${r.saving > 0 ? money(r.saving) : "–"}<small>${r.saving > 0 ? "est. saving" : "habit"}</small></div>
+    </div>`).join("");
+}
+const fmtAction = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+
+function renderDaily() {
+  const rows = DATA.daily, el = $("#daily");
+  const fams = FAMILIES.filter(f => rows.some(r => r[f]));
+  $("#daily-legend").innerHTML = fams.map(f => `<span><i style="background:${color(f)}"></i>${NAMES[f]}</span>`).join("");
+  if (!rows.length) { el.innerHTML = `<div class="empty">No usage in this period.</div>`; return; }
+  const W = Math.max(el.clientWidth, 300), H = 220, L = 44, B = 24, T = 8;
+  const totals = rows.map(r => fams.reduce((s, f) => s + (r[f] || 0), 0));
+  const max = niceMax(Math.max(...totals));
+  const step = (W - L) / rows.length, bw = Math.max(Math.min(step - 4, 36), 3);
+  const y = v => T + (H - T - B) * (1 - v / max);
+  let svg = `<svg width="${W}" height="${H}" role="img" aria-label="Daily cost by model">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = max * i / 4, yy = y(v);
+    svg += `<line x1="${L}" x2="${W}" y1="${yy}" y2="${yy}" stroke="var(--${i ? "grid" : "axis"})" />`;
+    svg += `<text x="${L - 6}" y="${yy + 4}" text-anchor="end">${money(v)}</text>`;
+  }
+  const labelEvery = Math.ceil(rows.length / Math.floor((W - L) / 56));
+  rows.forEach((r, i) => {
+    const x = L + i * step + (step - bw) / 2;
+    let base = 0;
+    const segs = fams.filter(f => r[f]);
+    segs.forEach((f, k) => {
+      const top = y(base + r[f]), bot = y(base);
+      const h = Math.max(bot - top - (k ? 2 : 0), 0.5);   // 2px surface gap between segments
+      const isTop = k === segs.length - 1, rr = Math.min(4, h / 2, bw / 2);
+      svg += isTop
+        ? `<path d="M${x},${top + h} v${-(h - rr)} q0,${-rr} ${rr},${-rr} h${bw - 2 * rr} q${rr},0 ${rr},${rr} v${h - rr} z" fill="${color(f)}"/>`
+        : `<rect x="${x}" y="${top}" width="${bw}" height="${h}" fill="${color(f)}"/>`;
+      base += r[f];
+    });
+    svg += `<rect class="hit" data-i="${i}" x="${L + i * step}" y="${T}" width="${step}" height="${H - T - B}" fill="transparent"/>`;
+    if (i % labelEvery === 0) svg += `<text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${day(r.date + "T12:00:00")}</text>`;
+  });
+  el.innerHTML = svg + "</svg>";
+  el.querySelectorAll(".hit").forEach(h => {
+    h.addEventListener("mousemove", ev => {
+      const r = rows[h.dataset.i];
+      showTip(`<b>${day(r.date + "T12:00:00")}</b> · ${money(totals[h.dataset.i])}` +
+        fams.filter(f => r[f]).reverse().map(f => `<div class="row"><span><i style="background:${color(f)}"></i>${NAMES[f]}</span><span>${money(r[f])}</span></div>`).join(""), ev);
+    });
+    h.addEventListener("mouseleave", hideTip);
+  });
+}
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = 10 ** Math.floor(Math.log10(v)), n = v / p;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+}
+
+function hbars(items, total, colorOf) {
+  return items.map(it => `<div class="hbar"><span title="${esc(it.label)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.label)}</span>
+    <div class="track"><div class="fill" style="width:${total ? Math.max(100 * it.value / total, 1) : 0}%;background:${colorOf(it)}"></div></div>
+    <span class="v">${money(it.value)}</span></div>`).join("");
+}
+function renderShares() {
+  const bm = DATA.by_model, total = DATA.totals.cost;
+  const items = FAMILIES.filter(f => bm[f]).map(f => ({ label: NAMES[f], value: bm[f].cost, f }));
+  $("#by-model").innerHTML = items.length ? hbars(items, total, it => color(it.f)) : `<div class="note">No data.</div>`;
+  const projects = DATA.by_project.slice(0, 6).map(p => ({ label: p.project, value: p.cost }));
+  $("#by-project").innerHTML = projects.length ? hbars(projects, projects[0].value, () => "var(--accent)") : `<div class="note">No data.</div>`;
+}
+
+let SORT = { key: "end", dir: -1 };
+function renderSessions() {
+  const budget = DATA.config.context_budget;
+  const cols = [
+    ["end", "Last active"], ["title", "First prompt"], ["project", "Project"], ["model", "Model"],
+    ["turns", "Turns", 1], ["peak_context", "Peak context"], ["compactions", "Compactions", 1], ["cost", "Cost", 1],
+  ];
+  const rows = [...DATA.sessions].sort((a, b) => {
+    const x = a[SORT.key], y = b[SORT.key];
+    return (x > y ? 1 : x < y ? -1 : 0) * SORT.dir;
+  });
+  const scaleMax = Math.max(budget * 1.5, ...rows.map(r => r.peak_context));
+  const head = `<thead><tr>${cols.map(([k, l, n]) => `<th class="${n ? "num" : ""}" data-k="${k}" aria-sort="${SORT.key === k ? (SORT.dir > 0 ? "ascending" : "descending") : "none"}">${l}${SORT.key === k ? (SORT.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead>`;
+  const body = rows.map(r => {
+    const frac = r.peak_context / scaleMax, over = r.peak_context > budget, warn = r.peak_context > budget * DATA.config.warn_ratio;
+    const fill = over ? "var(--critical)" : warn ? "var(--warning)" : "var(--good)";
+    return `<tr>
+      <td>${new Date(r.end).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+      <td class="title" title="${esc(r.title)}">${esc(r.title)}</td>
+      <td>${esc(r.project)}</td>
+      <td class="model"><span class="dot" style="background:${color(r.model)}"></span>${NAMES[r.model] || r.model}${r.subagent_calls ? ` <span class="note">+${r.subagent_calls} sub</span>` : ""}</td>
+      <td class="num">${r.turns}</td>
+      <td><div class="meter" title="${over ? "Over budget: compact earlier" : warn ? "Approaching budget" : "Within budget"}"><div class="track"><div class="fill" style="width:${100 * frac}%;background:${fill}"></div><div class="mark" style="left:${100 * budget / scaleMax}%"></div></div><span>${ktok(r.peak_context)}</span></div></td>
+      <td class="num">${r.compactions}</td>
+      <td class="num">${money(r.cost)}</td></tr>`;
+  }).join("");
+  $("#session-table").innerHTML = head + `<tbody>${body || `<tr><td colspan="8" class="empty">No sessions in this period.</td></tr>`}</tbody>`;
+  $("#session-table").querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+    SORT = { key: th.dataset.k, dir: SORT.key === th.dataset.k ? -SORT.dir : -1 };
+    renderSessions();
+  }));
+}
+
+function renderSetup() {
+  $("#plan-table").innerHTML = `<thead><tr><th>Component</th><th>Status if you install now</th><th>Location</th></tr></thead><tbody>` +
+    DATA.install_plan.map(s => `<tr><td>${esc(s.what)}</td><td>${esc(s.action)}</td><td><code>${esc(s.path)}</code></td></tr>`).join("") + "</tbody>";
+  const c = DATA.config;
+  ["context_budget", "warn_ratio", "idle_minutes"].forEach(k => $("#" + k).value = c[k]);
+  ["block_over_budget", "route_nudges"].forEach(k => $("#" + k).checked = c[k]);
+}
+$("#settings").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const body = {};
+  ["context_budget", "idle_minutes"].forEach(k => body[k] = parseInt($("#" + k).value, 10));
+  body.warn_ratio = parseFloat($("#warn_ratio").value);
+  ["block_over_budget", "route_nudges"].forEach(k => body[k] = $("#" + k).checked);
+  const res = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  $("#saved").textContent = res.ok ? "Saved. Recalculating…" : "Couldn't save.";
+  if (res.ok) { await load(); $("#saved").textContent = "Saved."; }
+});
+
+// ---- router
+const EXAMPLES = [
+  "Find where the session timeout is configured",
+  "Fix the failing date test in utils/dates.py",
+  "Add a CSV export button to the reports page",
+  "Design a caching layer for the API and plan the migration across all services",
+  "Investigate an intermittent race condition in the job queue",
+];
+$("#examples").innerHTML = EXAMPLES.map(e => `<button type="button">${esc(e)}</button>`).join("");
+$("#examples").querySelectorAll("button").forEach(b => b.addEventListener("click", () => { $("#task").value = b.textContent; route(); }));
+$("#route-btn").addEventListener("click", route);
+$("#task").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) route(); });
+
+async function route() {
+  const task = $("#task").value.trim();
+  if (!task) return;
+  const res = await fetch("/api/route", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task }) });
+  const r = await res.json();
+  const cat = DATA ? DATA.catalogue : [];
+  $("#route-result").innerHTML = `
+    <div class="card">
+      <div class="route-head"><span class="dot" style="background:${color(r.model)};width:12px;height:12px"></span>
+        <span class="model">${esc(r.name)}</span>
+        <span class="note">${r.relative_cost}× Sonnet's cost per token${r.fallback ? ` · try ${esc(r.fallback)} first if you're near your limit` : ""}</span></div>
+      <div class="chips">${r.reasons.map(x => `<span>${esc(x)}</span>`).join("")}</div>
+      <div class="ladder">${cat.map(m => `<div class="${m.key === r.model ? "on" : ""}"><b>${esc(m.name)}</b>${esc(m.good_for)}</div>`).join("")}</div>
+      <div><b>New session:</b><pre><code>${esc(r.command)}</code></pre></div>
+      <div><b>Already in a session:</b> <code>${esc(r.switch)}</code></div>
+      ${r.tips.length ? `<ul>${r.tips.map(t => `<li>${fmtAction(t)}</li>`).join("")}</ul>` : ""}
+    </div>`;
+}
+
+addEventListener("resize", () => DATA && renderDaily());
+load().catch(err => { $("#range").textContent = "Couldn't load usage: " + err; });
+</script>
+</body>
+</html>

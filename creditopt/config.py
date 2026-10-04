@@ -1,0 +1,36 @@
+"""User settings shared by the dashboard, hook and status line."""
+
+import json
+import os
+from pathlib import Path
+
+DEFAULTS = {
+    "context_budget": 150_000,   # compact before a session's context passes this
+    "warn_ratio": 0.7,           # amber warning at this fraction of the budget
+    "idle_minutes": 60,          # prompt cache is cold after this long
+    "block_over_budget": False,  # if true, the hook refuses prompts past the budget
+    "route_nudges": True,        # suggest a cheaper model when the prompt is trivial
+}
+
+
+def config_dir():
+    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / "creditopt"
+
+
+def load():
+    cfg = dict(DEFAULTS)
+    try:
+        cfg.update(json.loads((config_dir() / "config.json").read_text()))
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+def save(updates):
+    cfg = load()
+    cfg.update({k: v for k, v in updates.items() if k in DEFAULTS})
+    path = config_dir() / "config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg, indent=2))
+    return cfg
