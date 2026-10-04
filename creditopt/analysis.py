@@ -113,8 +113,8 @@ def _context_bloat(sessions, settings):
         "Every request re-reads the whole conversation. Past the budget, each turn costs far more "
         "than it needs to, and answer quality drifts as old, irrelevant detail piles up.",
         saving,
-        "Run `/compact` when the status line turns amber, or `/clear` when you switch tasks. "
-        "`creditopt install` adds a hook that warns you automatically.",
+        "Install the add-ons (Setup tab) so Claude Code compacts automatically at your budget, "
+        "and use `/clear` when you switch tasks.",
         hits)
 
 
@@ -169,8 +169,8 @@ def _overpowered(sessions, settings):
         "Short sessions with small answers and small context rarely need Opus or Fable. "
         "Sonnet handles them at roughly half the cost.",
         saving,
-        "Start routine work with `claude --model sonnet` (or `/model sonnet`). Use the Task Router "
-        "tab to check before you start.",
+        "Start routine work with `claude --model sonnet` (or `/model sonnet`), or use the Run a task "
+        "tab, which picks the model for you.",
         hits)
 
 
@@ -189,8 +189,8 @@ def _subagents(sessions):
         "Subagents mostly search and read files. That's Haiku-level work, and Haiku is a fraction "
         "of the price.",
         saving,
-        "`creditopt install` adds Haiku-pinned scout/runner subagents, so delegated exploration "
-        "and test runs stay cheap.",
+        "Install the add-ons (Setup tab) for Haiku scout and runner subagents, so delegated "
+        "exploration and test runs stay cheap.",
         ())
 
 

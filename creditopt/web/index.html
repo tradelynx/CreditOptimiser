@@ -95,8 +95,8 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
 th { color: var(--ink-2); font-weight: 600; font-size: 12px; cursor: pointer; user-select: none; white-space: nowrap; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-td.model { white-space: nowrap; }
-td.title { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td.model, td.when { white-space: nowrap; }
+td.title { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
 .meter { display: flex; align-items: center; gap: 8px; min-width: 150px; }
 .meter .track { position: relative; flex: 1; height: 8px; background: var(--grid); border-radius: 4px; }
@@ -309,7 +309,7 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
   <section id="setup" hidden>
     <div class="card" style="margin-bottom:12px">
       <h2>Automate it inside Claude Code</h2>
-      <p class="desc">One command wires three things into Claude Code. It's a dry run unless you add <code>--apply</code>, and settings.json is backed up first.</p>
+      <p class="desc">One step wires four things into Claude Code. It's a dry run unless you add <code>--apply</code>, and settings.json is backed up first.</p>
       <ol class="steps">
         <li><b>Context guard hook:</b> warns you before each prompt once context nears your budget, when you return to a cold cache, and when a trivial prompt is about to go to Opus.</li>
         <li><b>Status line:</b> a live context meter that turns amber, then red, as compaction becomes due.</li>
@@ -328,7 +328,7 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
     </div>
     <div class="card">
       <h2>Settings</h2>
-      <p class="desc">Used by the dashboard, the hook and the status line. Saved to ~/.config/creditopt/config.json.</p>
+      <p class="desc">Used by the dashboard, the hook and the status line. Saved to <code id="config-path">your CreditOptimiser settings folder</code>.</p>
       <form class="form" id="settings">
         <div><label for="context_budget">Compact budget (tokens). With the add-ons installed, Claude Code auto-compacts here (100k minimum)</label><input type="number" id="context_budget" min="20000" step="10000"></div>
         <div><label for="warn_ratio">Warn at fraction of budget</label><input type="number" id="warn_ratio" min="0.3" max="0.95" step="0.05"></div>
@@ -445,7 +445,8 @@ function renderRecs() {
       <div class="save">${r.saving > 0 ? money(r.saving) : "–"}<small>${r.saving > 0 ? "est. saving" : "habit"}</small></div>
     </div>`).join("");
 }
-const fmtAction = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+// Light Markdown for Claude's messages and our tips: `code` and **bold**.
+const fmtAction = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
 
 function renderDaily() {
   const rows = DATA.daily, el = $("#daily");
@@ -526,7 +527,7 @@ function renderSessions() {
     const frac = r.peak_context / scaleMax, over = r.peak_context > budget, warn = r.peak_context > budget * DATA.config.warn_ratio;
     const fill = over ? "var(--critical)" : warn ? "var(--warning)" : "var(--good)";
     return `<tr>
-      <td>${new Date(r.end).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+      <td class="when">${new Date(r.end).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
       <td class="title" title="${esc(r.title)}">${esc(r.title)}</td>
       <td>${esc(r.project)}</td>
       <td class="model"><span class="dot" style="background:${color(r.model)}"></span>${NAMES[r.model] || r.model}${r.subagent_calls ? ` <span class="note">+${r.subagent_calls} sub</span>` : ""}</td>
@@ -570,10 +571,11 @@ function renderSetup() {
   $("#install-btn").textContent = REPO ? `Install for ${name}` : "Install for all repositories";
   $("#uninstall-btn").textContent = REPO ? `Remove from ${name}` : "Remove from all repositories";
   $("#install-scope").textContent = REPO
-    ? `Installing for this repository only: everything goes in its .claude/ folder (the hook in settings.local.json, which isn't committed). Pick "All repositories" at the top of Overview to install everywhere.`
-    : `Installing for all of Claude Code (~/.claude). To limit it to one repository, pick it at the top of the Overview tab.`;
+    ? `Installing for this repository only: everything goes in its .claude/ folder (the hook in settings.local.json, which isn't committed). Pick "All repositories" at the top of the page to install everywhere.`
+    : `Installing for all of Claude Code (~/.claude). To limit it to one repository, pick it at the top of the page.`;
   $("#plan-table").innerHTML = `<thead><tr><th>Component</th><th>Status if you install now</th><th>Location</th></tr></thead><tbody>` +
     DATA.install_plan.map(s => `<tr><td>${esc(s.what)}</td><td>${esc(s.action)}</td><td><code>${esc(s.path)}</code></td></tr>`).join("") + "</tbody>";
+  $("#config-path").textContent = DATA.platform.config_file;
   const c = DATA.config;
   ["context_budget", "warn_ratio", "idle_minutes", "scan_depth"].forEach(k => $("#" + k).value = c[k]);
   $("#repo_roots").value = c.repo_roots.join(", ");

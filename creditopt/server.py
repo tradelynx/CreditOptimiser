@@ -46,7 +46,8 @@ def report(claude_dir=None, days=30, repo=None, rescan=False):
     data["config"] = cfg
     data["repo"] = repo or ""
     data["platform"] = {"os": "windows" if os.name == "nt" else "mac" if sys.platform == "darwin" else "linux",
-                        "python": config.python_command()}
+                        "python": config.python_command(),
+                        "config_file": str(config.config_dir() / "config.json")}
     data["prices_checked"] = models.PRICES_CHECKED
     data["repositories"] = repository_list(sessions, cfg, rescan)
     data["install_plan"] = installer.plan(claude_dir, repo=repo)

@@ -14,7 +14,7 @@ SIGNALS = [
     (r"\b(rename|typo|spelling|reformat|format|lint|prettier|sort imports)\b", -3, "mechanical edit"),
     (r"\b(find|search|grep|locate|where is|list (all|the)|which files?)\b", -2, "search / lookup"),
     (r"\b(what does|explain (this|the) (line|function|error)|quick question|summari[sz]e)\b", -2, "explanation / summary"),
-    (r"\b(convert|translate|json to|yaml|csv|regex)\b", -1, "conversion"),
+    (r"\b(convert|translate|json to \w+|(?:csv|yaml|json) to \w+|regex)\b", -1, "conversion"),
     (r"\b(commit message|changelog|docstring|comment)\b", -2, "boilerplate text"),
     (r"\b(run (the )?tests?|bump|update (the )?version)\b", -2, "routine command"),
     # Sonnet territory: normal engineering
