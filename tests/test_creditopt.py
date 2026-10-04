@@ -225,8 +225,13 @@ class InstallerTest(unittest.TestCase):
         cmd = installer._python_cmd("route") + " rename foo"
         if os.name == "nt":  # Claude Code uses Git Bash if installed, else PowerShell
             shells = [["powershell", "-NoProfile", "-Command", cmd]]
-            if shutil.which("bash"):
-                shells.append(["bash", "-c", cmd])
+            # Find Git Bash itself: a plain `bash` on PATH can be the WSL launcher.
+            git = shutil.which("git")
+            if git:
+                here = Path(git).resolve().parent  # ...\Git\cmd or ...\Git\bin
+                found = [c for c in (here / "bash.exe", here.parent / "bin" / "bash.exe") if c.is_file()]
+                if found:
+                    shells.append([str(found[0]), "-c", cmd])
         else:
             shells = [["/bin/sh", "-c", cmd]]
         for argv in shells:
@@ -320,6 +325,7 @@ class RunnerTest(unittest.TestCase):
     def test_detect_test_command(self):
         from creditopt import runner
         self.assertEqual(runner.detect_test_command(str(self.repo)), "")
+        self.assertEqual(runner.detect_test_command(""), "")  # no repo picked: never guess from cwd
         (self.repo / "go.mod").write_text("module x", encoding="utf-8")
         self.assertEqual(runner.detect_test_command(str(self.repo)), "go test ./...")
 

@@ -149,7 +149,9 @@ def resolve_options(options=None):
 
 def detect_test_command(repo):
     """Best guess at a repo's test command, or '' if there's no obvious one."""
-    root = Path(repo or ".")
+    if not repo:
+        return ""
+    root = Path(repo)
     try:
         pkg = json.loads((root / "package.json").read_text(encoding="utf-8"))
         script = (pkg.get("scripts") or {}).get("test", "")

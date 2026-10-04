@@ -33,6 +33,22 @@ goes. It runs each task on the cheapest setup that will still do it well, and te
 Everything runs on your own computer. Nothing is uploaded, and there are no third-party
 dependencies.
 
+![The CreditOptimiser dashboard: usage, savings opportunities and daily usage by model](docs/overview.png)
+
+<details>
+<summary>More screenshots</summary>
+
+**Running a task:** the plan, with the chosen model and sub-agents
+
+![Run a task](docs/run-a-task.png)
+
+**After a task:** what it cost compared with each model alone
+
+![Cost comparison](docs/cost-comparison.png)
+
+*Screenshots use the built-in sample data (`--demo`).*
+</details>
+
 ## What you need
 
 - **Claude Code**, installed and logged in. CreditOptimiser works with Claude Code only, not
