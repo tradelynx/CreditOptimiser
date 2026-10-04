@@ -12,6 +12,8 @@ DEFAULTS = {
     "route_nudges": True,        # suggest a cheaper model when the prompt is trivial
     "repo_roots": [],            # folders to scan for git repos (empty = your home folder)
     "scan_depth": 4,             # how many folders deep to look for repos
+    "auto_escalate": True,       # resume an unfinished run once on the next model up
+    "claude_path": "",           # path to the claude command, if it isn't on PATH
 }
 
 

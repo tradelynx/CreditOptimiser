@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
-from . import analysis, config, discover, installer, router
+from . import analysis, config, discover, installer, router, runner
 from .transcripts import filter_repo, load_sessions, repositories
 
 WEB = Path(__file__).parent / "web"
@@ -66,6 +66,15 @@ def make_handler(claude_dir):
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
                 return self._send(200, (WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
+            if url.path == "/api/runs":
+                return self._send(200, {"history": runner.history(),
+                                        "claude": bool(runner.find_claude())})
+            if url.path.startswith("/api/run/"):
+                run = runner.RUNS.get(url.path.rsplit("/", 1)[-1])
+                if not run:
+                    return self._send(404, {"error": "unknown run"})
+                after = int(parse_qs(url.query).get("after", ["0"])[0])
+                return self._send(200, run.snapshot(after))
             if url.path == "/api/report":
                 q = parse_qs(url.query)
                 days = int(q.get("days", ["30"])[0])
@@ -85,6 +94,21 @@ def make_handler(claude_dir):
                 return self._send(400, {"error": "invalid json"})
             if url.path == "/api/route":
                 return self._send(200, router.route(str(body.get("task", ""))))
+            if url.path == "/api/plan":
+                return self._send(200, runner.plan_run(str(body.get("task", "")),
+                                                       str(body.get("repo", "")), body.get("model")))
+            if url.path == "/api/run":
+                try:
+                    run = runner.start(str(body.get("task", "")), str(body.get("repo", "")),
+                                       body.get("model"))
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
+                return self._send(200, run.snapshot())
+            if url.path.startswith("/api/run/") and url.path.endswith("/cancel"):
+                run = runner.RUNS.get(url.path.split("/")[3])
+                if run:
+                    run.cancel()
+                return self._send(200, {"ok": bool(run)})
             if url.path == "/api/config":
                 clean = {}
                 for k in config.DEFAULTS:

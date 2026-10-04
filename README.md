@@ -19,6 +19,40 @@ creditopt install                # dry run: shows what it would add to Claude Co
 creditopt install --apply        # add the hook, status line and subagents
 ```
 
+## Running tasks (the Run a task tab, or `creditopt run`)
+
+Pick a repository, describe the task, and press **Run**. CreditOptimiser plans the cheapest
+setup that's likely to do the job well, then runs Claude Code in that repo and streams its
+progress, including the actual cost per model when it finishes.
+
+- **Lead model:** chosen by the router (you can override it). Haiku handles small
+  mechanical tasks on its own, with no sub-agents.
+- **Sub-agents**, added only where they pay off:
+  - `scout` (Haiku) does the searching, so file dumps don't sit in the expensive context.
+  - `implementer` (Sonnet) makes clearly specified edits when Opus leads (half Opus's
+    price), and runs in parallel for tasks with several independent parts.
+  - `verifier` (Haiku) runs tests and builds. It's only added when the repo's Claude Code
+    settings allow shell commands.
+- **Permissions:** runs can read and edit files (Claude Code's `acceptEdits` mode). Shell
+  commands are refused unless the repo's settings allow them. Review the changes with
+  `git diff`. Working on a branch is a good habit.
+- **Quality guard:** every run ends with a status:
+  - *done*: finished and checked.
+  - *done, not tested*: finished, but the checks couldn't run. It tells you which to run.
+  - *incomplete*: not finished. An incomplete or failed run is resumed once on the next
+    model up, keeping the work so far. It never escalates automatically to Fable; choose
+    Fable yourself if you want it. Turn retries off with `auto_escalate=false`.
+
+```bash
+python3 -m creditopt run --repo ~/Code/shop "Add a CSV export button to the reports page"
+python3 -m creditopt run --repo ~/Code/shop --dry-run "…"   # show the plan only
+python3 -m creditopt run --model opus "…"                    # override the model
+```
+
+The model choice is a heuristic, so it will sometimes be wrong. The retry catches runs where
+the model was too small, and the override is there when you know better. Runs are logged to
+`~/.config/creditopt/runs.jsonl`.
+
 ## Choosing a repository
 
 The dashboard has a **repository dropdown** at the top. It lists the folders you've used
@@ -56,8 +90,8 @@ python3 -m creditopt config --set repo_roots="~/Code, ~/Work"
   - *Expensive subagents:* exploration subagents running on Sonnet or above.
   - *Long sessions:* 30+ turns with no `/compact` or `/clear`.
 - **Sessions:** every session, with a peak-context meter against your budget.
-- **Task router:** describe a task and get a model recommendation, the reasons for it, and
-  a ready-to-paste `claude --model …` command.
+- **Run a task:** describe a task, preview the plan (lead model, sub-agents, and the reasons),
+  then run it in the selected repository with live progress.
 - **Setup:** see the install plan and edit your settings.
 
 ### 2. Model routing (`creditopt route "…"`)
@@ -106,6 +140,8 @@ or existing agent files, and it backs up `settings.json` before writing.
 | `route_nudges` | true | suggest a cheaper model for trivial prompts |
 | `repo_roots` | home folder | folders to scan for git repositories |
 | `scan_depth` | 4 | how many folders deep to scan |
+| `auto_escalate` | true | resume an unfinished run once on the next model up (never Fable) |
+| `claude_path` | auto | path to the `claude` command if it isn't found automatically |
 
 ## How the numbers work
 - Usage comes from the `usage` block of each API response in `~/.claude/projects/**/*.jsonl`,

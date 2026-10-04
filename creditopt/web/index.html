@@ -133,6 +133,29 @@ textarea { min-height: 96px; resize: vertical; }
 .steps li { margin: 6px 0; }
 .empty { text-align: center; padding: 48px 16px; color: var(--ink-2); }
 .copy { margin-left: 6px; font-size: 12px; }
+.repo-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.repo-pick label { color: var(--ink-2); font-size: 12.5px; }
+.repo-pick select { max-width: 260px; }
+.btn.ghost { padding: 6px 12px; font-weight: 500; }
+.btn:disabled { opacity: .5; cursor: default; }
+.runbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.plan { margin-top: 16px; }
+.agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin: 10px 0; }
+.agents div { border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 12.5px; color: var(--ink-2); }
+.agents b { color: var(--ink); font-size: 13.5px; }
+.log { margin-top: 12px; max-height: 460px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--page); padding: 8px 12px; font-size: 13px; }
+.log .ev { padding: 4px 0; border-bottom: 1px dashed var(--grid); white-space: pre-wrap; word-break: break-word; }
+.log .ev:last-child { border-bottom: 0; }
+.log .tool { color: var(--ink-2); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.log .sub { padding-left: 18px; }
+.log .agent { font-weight: 600; }
+.log .warn { color: var(--critical); }
+.pill { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); }
+.pill::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--muted); }
+.pill.running::before { background: var(--accent); } .pill.done::before { background: var(--good); }
+.pill.unverified::before, .pill.incomplete::before { background: var(--warning); }
+.pill.failed::before, .pill.cancelled::before { background: var(--critical); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -142,19 +165,21 @@ textarea { min-height: 96px; resize: vertical; }
     <h1>CreditOptimiser</h1>
     <div class="sub" id="range">Loading your Claude Code usage…</div>
   </div>
+  <div class="repo-pick">
+    <label for="repo">Repository</label>
+    <select id="repo"><option value="">All repositories</option></select>
+    <button class="btn ghost" id="rescan" type="button" title="Look for new git repositories on this computer">Rescan</button>
+  </div>
   <nav role="tablist">
     <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
     <button role="tab" data-tab="sessions" aria-selected="false">Sessions</button>
-    <button role="tab" data-tab="router" aria-selected="false">Task router</button>
+    <button role="tab" data-tab="router" aria-selected="false">Run a task</button>
     <button role="tab" data-tab="setup" aria-selected="false">Setup</button>
   </nav>
 </header>
 <main>
   <section id="overview">
     <div class="toolbar">
-      <label class="sr-only" for="repo">Repository</label>
-      <select id="repo"><option value="">All repositories</option></select>
-      <button class="btn ghost" id="rescan" type="button" title="Look for new git repositories on this computer">Rescan</button>
       <div class="seg" id="days">
         <button data-days="7">7 days</button>
         <button data-days="30" aria-pressed="true">30 days</button>
@@ -196,12 +221,28 @@ textarea { min-height: 96px; resize: vertical; }
 
   <section id="router" hidden>
     <div class="card">
-      <h2>Which model should do this?</h2>
-      <p class="desc">Describe the task. The router picks the cheapest model likely to do it well and explains why. It runs locally and is free.</p>
+      <h2>Run a task</h2>
+      <p class="desc" id="run-where">Describe what you want done. CreditOptimiser picks the cheapest model likely to do it well, adds sub-agents where they save money, and runs Claude Code in the selected repository.</p>
       <textarea id="task" placeholder="e.g. Add pagination to the /orders endpoint and update its tests"></textarea>
       <div class="examples" id="examples"></div>
-      <button class="btn" id="route-btn">Recommend a model</button>
-      <div class="route-result" id="route-result"></div>
+      <div class="runbar">
+        <label for="model-override" class="note">Model</label>
+        <select id="model-override">
+          <option value="">Auto (recommended)</option>
+          <option value="haiku">Haiku 4.5</option><option value="sonnet">Sonnet 5.5</option>
+          <option value="opus">Opus 5.5</option><option value="fable">Fable 5.1</option>
+        </select>
+        <button class="btn ghost" id="route-btn" type="button">Preview plan</button>
+        <button class="btn" id="run-btn" type="button">Run</button>
+        <button class="btn ghost" id="cancel-btn" type="button" hidden>Cancel</button>
+        <span class="note" id="run-msg"></span>
+      </div>
+      <div class="plan" id="route-result"></div>
+      <div id="run-panel"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>Recent runs</h2>
+      <div class="tablewrap"><table id="run-history"></table></div>
     </div>
   </section>
 
@@ -303,6 +344,7 @@ function render() {
     ? `${t.sessions} sessions · ${day(t.first)} – ${day(t.last)}`
     : "No Claude Code usage found in this period");
   renderRepoPicker();
+  renderRunWhere();
   renderTiles(t); renderRecs(); renderDaily(); renderShares(); renderSessions(); renderSetup();
 }
 
@@ -489,7 +531,7 @@ $("#settings").addEventListener("submit", async ev => {
   if (res.ok) { await load(true); $("#saved").textContent = "Saved."; }
 });
 
-// ---- router
+// ---- run a task
 const EXAMPLES = [
   "Find where the session timeout is configured",
   "Fix the failing date test in utils/dates.py",
@@ -498,28 +540,95 @@ const EXAMPLES = [
   "Investigate an intermittent race condition in the job queue",
 ];
 $("#examples").innerHTML = EXAMPLES.map(e => `<button type="button">${esc(e)}</button>`).join("");
-$("#examples").querySelectorAll("button").forEach(b => b.addEventListener("click", () => { $("#task").value = b.textContent; route(); }));
-$("#route-btn").addEventListener("click", route);
-$("#task").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) route(); });
+$("#examples").querySelectorAll("button").forEach(b => b.addEventListener("click", () => { $("#task").value = b.textContent; preview(); }));
+$("#route-btn").addEventListener("click", preview);
+$("#run-btn").addEventListener("click", startRun);
+$("#task").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) preview(); });
+const repoName = () => REPO ? REPO.split(/[\\/]/).filter(Boolean).pop() : "";
+const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-async function route() {
+function renderRunWhere() {
+  $("#run-where").innerHTML = REPO
+    ? `Runs in <b>${esc(repoName())}</b> <span class="note">(${esc(REPO)})</span>. Claude Code may read and edit files there; shell commands are refused unless that repo's Claude Code settings allow them. Review the changes with <code>git diff</code> afterwards.`
+    : `Pick a <b>repository</b> at the top of the page to run tasks in it.`;
+  $("#run-btn").disabled = !REPO || RUN_ID !== null;
+}
+
+async function preview() {
   const task = $("#task").value.trim();
   if (!task) return;
-  const res = await fetch("/api/route", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task }) });
-  const r = await res.json();
+  const p = await (await post("/api/plan", { task, repo: REPO, model: $("#model-override").value || null })).json();
   const cat = DATA ? DATA.catalogue : [];
   $("#route-result").innerHTML = `
     <div class="card">
-      <div class="route-head"><span class="dot" style="background:${color(r.model)};width:12px;height:12px"></span>
-        <span class="model">${esc(r.name)}</span>
-        <span class="note">${r.relative_cost}× Sonnet's cost per token${r.fallback ? ` · try ${esc(r.fallback)} first if you're near your limit` : ""}</span></div>
-      <div class="chips">${r.reasons.map(x => `<span>${esc(x)}</span>`).join("")}</div>
-      <div class="ladder">${cat.map(m => `<div class="${m.key === r.model ? "on" : ""}"><b>${esc(m.name)}</b>${esc(m.good_for)}</div>`).join("")}</div>
-      <div><b>New session:</b><pre><code>${esc(r.command)}</code></pre></div>
-      <div><b>Already in a session:</b> <code>${esc(r.switch)}</code></div>
-      ${r.tips.length ? `<ul>${r.tips.map(t => `<li>${fmtAction(t)}</li>`).join("")}</ul>` : ""}
+      <div class="route-head"><span class="dot" style="background:${color(p.model)};width:12px;height:12px"></span>
+        <span class="model">${esc(p.model_name)} leads</span>
+        ${p.model !== p.routed_model ? `<span class="note">(you overrode the recommended ${esc(NAMES[p.routed_model])})</span>` : ""}</div>
+      <div class="chips">${p.route_reasons.map(x => `<span>${esc(x)}</span>`).join("")}</div>
+      <div class="ladder">${cat.map(m => `<div class="${m.key === p.model ? "on" : ""}"><b>${esc(m.name)}</b>${esc(m.good_for)}</div>`).join("")}</div>
+      <b>Sub-agents</b>
+      ${p.agents.length ? `<div class="agents">${p.agents.map(a => `<div><b><span class="dot" style="background:${color(a.model)}"></span>${esc(a.name)}</b> · ${esc(NAMES[a.model])}<br>${esc(a.description)}</div>`).join("")}</div>` : `<p class="note">None needed.</p>`}
+      <ul>${p.strategy.map(w => `<li>${esc(w)}</li>`).join("")}</ul>
+      <p class="note">${p.shell_allowed ? "Shell commands are allowed in this repo, so it will run tests." : "Shell commands aren't allowed in this repo, so it won't run tests; it will tell you which to run."}
+        ${p.escalate_to ? ` If the work isn't finished, it resumes once on ${esc(NAMES[p.escalate_to])}.` : ""}</p>
     </div>`;
 }
+
+let RUN_ID = null, RUN_NEXT = 0, RUN_TIMER = null;
+async function startRun() {
+  const task = $("#task").value.trim();
+  if (!task || !REPO) return;
+  if (!confirm(`Run this task in ${repoName()}? Claude Code will be able to edit files there.`)) return;
+  await preview();
+  const res = await post("/api/run", { task, repo: REPO, model: $("#model-override").value || null });
+  const out = await res.json();
+  if (!res.ok) { $("#run-msg").textContent = out.error; return; }
+  RUN_ID = out.id; RUN_NEXT = 0; $("#run-msg").textContent = "";
+  $("#run-panel").innerHTML = `<div class="runbar"><span class="pill running" id="run-state">running</span><span class="note" id="run-cost"></span></div><div class="log" id="run-log"></div>`;
+  $("#cancel-btn").hidden = false; renderRunWhere();
+  poll();
+}
+$("#cancel-btn").addEventListener("click", () => RUN_ID && post(`/api/run/${RUN_ID}/cancel`, {}));
+
+async function poll() {
+  const snap = await (await fetch(`/api/run/${RUN_ID}?after=${RUN_NEXT}`)).json();
+  RUN_NEXT = snap.next;
+  const log = $("#run-log"), stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  for (const ev of snap.events) log.insertAdjacentHTML("beforeend", renderEvent(ev));
+  if (stick) log.scrollTop = log.scrollHeight;
+  $("#run-state").className = `pill ${snap.state}`;
+  $("#run-state").textContent = { unverified: "done, not tested" }[snap.state] || snap.state;
+  $("#run-cost").textContent = snap.cost ? `${money(snap.cost)} · ` + Object.entries(snap.by_model).map(([k, v]) => `${NAMES[k] || k} ${money(v)}`).join(", ") : "";
+  if (snap.state === "running") { RUN_TIMER = setTimeout(poll, 800); return; }
+  RUN_ID = null; $("#cancel-btn").hidden = true; renderRunWhere(); loadHistory(); load();
+}
+
+function renderEvent(ev) {
+  const sub = ev.sub ? " sub" : "";
+  switch (ev.kind) {
+    case "start": return `<div class="ev note">Started on ${esc(ev.model)}</div>`;
+    case "text": return `<div class="ev${sub}">${fmtAction(ev.text)}</div>`;
+    case "tool": return `<div class="ev tool${sub}">${esc(ev.tool)} ${esc(ev.text)}</div>`;
+    case "agent": return `<div class="ev agent">⇢ ${esc(ev.agent)} sub-agent: <span class="note">${esc(ev.text)}</span></div>`;
+    case "escalate": return `<div class="ev warn">↑ ${esc(ev.text)}</div>`;
+    case "error": return `<div class="ev warn">${esc(ev.text)}</div>`;
+    case "result": return `<div class="ev note">Finished: ${esc(ev.status || ev.subtype)} · ${money(ev.cost)} · ${ev.turns} turns${ev.reason ? " · " + esc(ev.reason) : ""}</div>`;
+  }
+  return "";
+}
+
+async function loadHistory() {
+  const h = await (await fetch("/api/runs")).json();
+  if (!h.claude) $("#run-msg").textContent = "The claude command wasn't found. Install Claude Code, or set claude_path in settings.";
+  $("#run-history").innerHTML = h.history.length
+    ? `<thead><tr><th>When</th><th>Task</th><th>Repository</th><th>Lead</th><th>Result</th><th class="num">Cost</th></tr></thead><tbody>` +
+      h.history.map(r => `<tr><td>${new Date(r.started).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+        <td class="title" title="${esc(r.task)}">${esc(r.task)}</td><td>${esc(r.repo.split(/[\\/]/).filter(Boolean).pop())}</td>
+        <td class="model"><span class="dot" style="background:${color(r.model)}"></span>${NAMES[r.model]}</td>
+        <td><span class="pill ${r.state}">${{ unverified: "done, not tested" }[r.state] || r.state}</span></td><td class="num">${money(r.cost)}</td></tr>`).join("") + "</tbody>"
+    : `<tbody><tr><td class="note">No runs yet.</td></tr></tbody>`;
+}
+loadHistory();
 
 addEventListener("resize", () => DATA && renderDaily());
 load().catch(err => { $("#range").textContent = "Couldn't load usage: " + err; });

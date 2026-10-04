@@ -1,4 +1,5 @@
 import json
+import time
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -212,3 +213,83 @@ class InstallerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FAKE_CLAUDE = r'''#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+model = args[args.index("--model") + 1]
+resumed = "--resume" in args
+print(json.dumps({"type": "system", "subtype": "init", "model": model, "session_id": "sess-1"}))
+print(json.dumps({"type": "assistant", "message": {"content": [
+    {"type": "tool_use", "name": "Agent", "input": {"subagent_type": "scout", "description": "find files"}},
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "a.py"}}]}}))
+status = "STATUS: DONE" if resumed else "STATUS: INCOMPLETE: ran out of ideas"
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 3,
+                  "total_cost_usd": 0.5, "session_id": "sess-1", "result": "did it\n" + status,
+                  "modelUsage": {"claude-" + model + "-x": {"costUSD": 0.5}}}))
+'''
+
+
+class RunnerTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict("os.environ", {"XDG_CONFIG_HOME": self.tmp.name,
+                                                 "CLAUDE_CONFIG_DIR": self.tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+
+    def test_plans(self):
+        from creditopt import runner
+        small = runner.plan_run("rename foo to bar in a.py", str(self.repo))
+        self.assertEqual((small["model"], small["agents"]), ("haiku", []))
+        big = runner.plan_run("Design the architecture for migrating auth across the entire monorepo", str(self.repo))
+        self.assertEqual(big["model"], "opus")
+        self.assertEqual([a["name"] for a in big["agents"]], ["scout", "implementer"])
+        self.assertFalse(big["shell_allowed"])
+        self.assertIn("don't try to run tests", big["system_prompt"])
+        self.assertEqual(runner.plan_run("rename foo", str(self.repo), "sonnet")["model"], "sonnet")
+
+    def test_shell_permission_adds_verifier(self):
+        from creditopt import runner
+        (self.repo / ".claude").mkdir()
+        (self.repo / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["Bash(npm test)"]}}))
+        plan = runner.plan_run("Add pagination to the orders endpoint", str(self.repo))
+        self.assertIn("verifier", [a["name"] for a in plan["agents"]])
+
+    def test_parse_events(self):
+        from creditopt import runner
+        line = json.dumps({"type": "result", "is_error": False, "total_cost_usd": 1.0, "num_turns": 2,
+                           "result": "x\nSTATUS: UNVERIFIED: run npm test", "modelUsage": {"claude-opus-5-5": {"costUSD": 1.0}}})
+        ev = runner.parse_event(line)[0]
+        self.assertEqual((ev["status"], ev["reason"], ev["by_model"]), ("UNVERIFIED", "run npm test", {"opus": 1.0}))
+        self.assertEqual(runner.parse_event("not json"), [])
+
+    def test_run_escalates_and_finishes(self):
+        from creditopt import runner
+        fake = Path(self.tmp.name) / "claude"
+        fake.write_text(FAKE_CLAUDE)
+        fake.chmod(0o755)
+        config.save({"claude_path": str(fake)})
+        run = runner.start("rename foo to bar in a.py", str(self.repo))
+        for _ in range(100):
+            if run.state != "running":
+                break
+            time.sleep(0.05)
+        snap = run.snapshot()
+        kinds = [e["kind"] for e in snap["events"]]
+        self.assertEqual(snap["state"], "done")
+        self.assertIn("escalate", kinds)
+        self.assertIn("agent", kinds)
+        self.assertEqual(snap["by_model"], {"haiku": 0.5, "sonnet": 0.5})
+        self.assertEqual(runner.history()[0]["state"], "done")
+
+    def test_start_validates(self):
+        from creditopt import runner
+        with self.assertRaises(ValueError):
+            runner.start("", str(self.repo))
+        with self.assertRaises(ValueError):
+            runner.start("do it", "/no/such/repo")

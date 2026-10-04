@@ -2,10 +2,11 @@
 
 import argparse
 import os
+import time
 import json
 import sys
 
-from . import config, hooks, installer, router, server
+from . import config, hooks, installer, router, runner, server
 
 
 def _money(x):
@@ -43,6 +44,41 @@ def cmd_route(args):
     print(f"  {rec['command']}")
     for tip in rec["tips"]:
         print(f"  • {tip}")
+
+
+def cmd_run(args):
+    task = " ".join(args.task)
+    repo = args.repo or os.getcwd()
+    plan = runner.plan_run(task, repo, args.model)
+    print(f"Lead: {plan['model_name']}  Subagents: "
+          f"{', '.join(a['name'] + ' (' + a['model'] + ')' for a in plan['agents']) or 'none'}")
+    for why in plan["strategy"]:
+        print(f"  • {why}")
+    if args.dry_run:
+        return
+    try:
+        run = runner.start(task, repo, args.model)
+    except ValueError as e:
+        sys.exit(str(e))
+    seen = 0
+    while True:
+        snap = run.snapshot(seen)
+        seen = snap["next"]
+        for ev in snap["events"]:
+            k = ev["kind"]
+            if k == "text" and not ev.get("sub"):
+                print(ev["text"])
+            elif k == "tool":
+                print(f"  {'  ' if ev.get('sub') else ''}[{ev['tool']}] {ev['text']}")
+            elif k == "agent":
+                print(f"  ⇢ subagent {ev['agent']}: {ev['text']}")
+            elif k in ("escalate", "error"):
+                print(f"  ! {ev['text']}")
+        if snap["state"] != "running":
+            print(f"\n{snap['state'].upper()} · ${snap['cost']:.2f} · "
+                  + ", ".join(f"{k} ${v:.2f}" for k, v in snap["by_model"].items()))
+            return
+        time.sleep(0.5)
 
 
 def cmd_install(args):
@@ -93,6 +129,11 @@ def main(argv=None):
     ro.add_argument("task", nargs="+")
     ro.add_argument("--json", action="store_true")
 
+    rn = sub.add_parser("run", help="run a task with Claude Code on the most cost-effective setup")
+    rn.add_argument("task", nargs="+")
+    rn.add_argument("--model", choices=["haiku", "sonnet", "opus", "fable"], help="override the routed model")
+    rn.add_argument("--dry-run", action="store_true", help="show the plan without running")
+
     i = sub.add_parser("install", help="add subagents, hook and status line to Claude Code")
     i.add_argument("--apply", action="store_true", help="actually write the changes")
     i.add_argument("--force-statusline", action="store_true")
@@ -102,7 +143,7 @@ def main(argv=None):
     c.add_argument("--set", action="append", metavar="KEY=VALUE")
 
     repo_help = "only this repository (a folder you run Claude Code in)"
-    for sp in (s, r, i):
+    for sp in (s, r, i, rn):
         sp.add_argument("--repo", metavar="PATH", help=repo_help)
 
     sub.add_parser("hook", help="(used by Claude Code) UserPromptSubmit hook")
@@ -122,7 +163,7 @@ def main(argv=None):
             from . import demo
             claude_dir = demo.generate(tempfile.mkdtemp(prefix="creditopt-demo-"))
         return server.serve(args.port, claude_dir, not args.no_browser, args.repo)
-    handlers = {"report": cmd_report, "route": cmd_route, "install": cmd_install, "config": cmd_config}
+    handlers = {"run": cmd_run, "report": cmd_report, "route": cmd_route, "install": cmd_install, "config": cmd_config}
     if args.cmd not in handlers:
         p.print_help()
         return 0
