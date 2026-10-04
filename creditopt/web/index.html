@@ -343,6 +343,10 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const money = v => v >= 100 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`;
 const ktok = v => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : `${Math.round(v / 1e3)}k`;
 const day = iso => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+// Every API call carries the per-launch token the server put in this page.
+const TOKEN = document.querySelector('meta[name="creditopt-token"]')?.content || "";
+const _fetch = window.fetch.bind(window);
+window.fetch = (url, opts = {}) => _fetch(url, { ...opts, headers: { ...(opts.headers || {}), "X-CreditOpt-Token": TOKEN } });
 let DATA = null, DAYS = 30, REPO = "";
 try { DAYS = Number(localStorage.getItem("co-days") ?? 30); REPO = localStorage.getItem("co-repo") || ""; } catch (e) {}
 const urlRepo = new URLSearchParams(location.search).get("repo");

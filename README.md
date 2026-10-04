@@ -155,6 +155,12 @@ or existing agent files, and it backs up `settings.json` before writing.
 > still runs near the context limit. CreditOptimiser nudges you to compact far earlier,
 > which is where the savings are.
 
+## Security
+
+Everything runs on your machine, and the dashboard can only be used by its own page. Runs
+can edit files in the repo you pick, and running tests executes that repo's code. Read
+[SECURITY.md](SECURITY.md) before running tasks in repositories you don't fully trust.
+
 ## Settings
 
 `creditopt config --set context_budget=120000`, or use the dashboard's Setup tab. Stored in

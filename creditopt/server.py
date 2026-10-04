@@ -1,4 +1,14 @@
-"""Local dashboard server. Binds to 127.0.0.1 only: your transcripts never leave the machine."""
+"""Local dashboard server.
+
+Security model: it binds to 127.0.0.1 only, so nothing on your network can reach
+it. Requests must be addressed to localhost (blocks DNS rebinding), and every
+API call must carry a random token that's minted at startup and handed only
+to the dashboard page. Other websites, including other local dev servers on
+different ports, can't drive it.
+"""
+
+import hmac
+import secrets
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -37,15 +47,33 @@ def report(claude_dir=None, days=30, repo=None, rescan=False):
     return data
 
 
-def make_handler(claude_dir):
+TOKEN_HEADER = "X-CreditOpt-Token"
+# Settings the browser may never change: they decide which program gets run.
+LOCKED_SETTINGS = {"claude_path"}
+PAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                               "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                               "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def make_handler(claude_dir, token=None):
+    token = token or secrets.token_urlsafe(32)
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
 
-        def _send(self, status, body, ctype="application/json"):
+        def _send(self, status, body, ctype="application/json", headers=None):
             raw = body if isinstance(body, bytes) else json.dumps(body).encode()
             self.send_response(status)
             self.send_header("Content-Type", ctype)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -60,12 +88,33 @@ def make_handler(claude_dir):
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
             return host in ("127.0.0.1", "localhost", "::1")
 
+        def _same_origin(self):
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True  # not a cross-site browser request
+            port = self.server.server_address[1]
+            return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
+
+        def _authorised(self):
+            return (self._local_host() and self._same_origin()
+                    and hmac.compare_digest(self.headers.get(TOKEN_HEADER, ""), token))
+
         def do_GET(self):
             if not self._local_host():
                 return self._send(403, {"error": "forbidden"})
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
-                return self._send(200, (WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
+                page = (WEB / "index.html").read_text().replace(
+                    "</head>", f'<meta name="creditopt-token" content="{token}">\n</head>', 1)
+                return self._send(200, page.encode(), "text/html; charset=utf-8", PAGE_HEADERS)
+            if not self._authorised():
+                return self._send(403, {"error": "forbidden"})
+            try:
+                return self._get_api(url)
+            except ValueError:
+                return self._send(400, {"error": "bad request"})
+
+        def _get_api(self, url):
             if url.path == "/api/runs":
                 return self._send(200, {"history": runner.history(),
                                         "claude": bool(runner.find_claude()),
@@ -85,10 +134,11 @@ def make_handler(claude_dir):
             return self._send(404, {"error": "not found"})
 
         def do_POST(self):
-            # Reject cross-site requests: only our own page may change settings.
-            origin = self.headers.get("Origin")
-            if not self._local_host() or (origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost")):
+            # Only our own page (same origin, holding the token) may act.
+            if not self._authorised():
                 return self._send(403, {"error": "forbidden"})
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                return self._send(415, {"error": "expected application/json"})
             url = urlparse(self.path)
             try:
                 body = self._body()
@@ -115,7 +165,7 @@ def make_handler(claude_dir):
             if url.path == "/api/config":
                 clean = {}
                 for k in config.DEFAULTS:
-                    if k in body:
+                    if k in body and k not in LOCKED_SETTINGS:
                         try:
                             clean[k] = config.coerce(k, body[k])
                         except (TypeError, ValueError):

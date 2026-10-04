@@ -331,3 +331,60 @@ class RunnerTest(unittest.TestCase):
             runner.start("", str(self.repo))
         with self.assertRaises(ValueError):
             runner.start("do it", "/no/such/repo")
+
+
+class ServerSecurityTest(unittest.TestCase):
+    def setUp(self):
+        import threading
+        from http.server import ThreadingHTTPServer
+        from creditopt import server
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict("os.environ", {"XDG_CONFIG_HOME": self.tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.make_handler(self.tmp.name, token="s3cret"))
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+
+    def call(self, method, path, body=None, headers=None):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        h = {"Content-Type": "application/json", "X-CreditOpt-Token": "s3cret", **(headers or {})}
+        h = {k: v for k, v in h.items() if v is not None}
+        conn.request(method, path, json.dumps(body) if body is not None else None, h)
+        r = conn.getresponse()
+        data = r.read()
+        conn.close()
+        return r.status, data
+
+    def test_page_carries_token_and_headers(self):
+        status, page = self.call("GET", "/", headers={"X-CreditOpt-Token": None})
+        self.assertEqual(status, 200)
+        self.assertIn(b'content="s3cret"', page)
+
+    def test_api_requires_token(self):
+        self.assertEqual(self.call("GET", "/api/runs")[0], 200)
+        self.assertEqual(self.call("GET", "/api/runs", headers={"X-CreditOpt-Token": None})[0], 403)
+        self.assertEqual(self.call("GET", "/api/runs", headers={"X-CreditOpt-Token": "wrong"})[0], 403)
+        self.assertEqual(self.call("POST", "/api/route", {"task": "x"}, {"X-CreditOpt-Token": None})[0], 403)
+
+    def test_rejects_other_origins_and_hosts(self):
+        evil = {"Origin": "http://localhost:3000"}
+        self.assertEqual(self.call("POST", "/api/route", {"task": "x"}, evil)[0], 403)
+        self.assertEqual(self.call("POST", "/api/route", {"task": "x"}, {"Origin": f"http://127.0.0.1:{self.port}"})[0], 200)
+        self.assertEqual(self.call("GET", "/", headers={"Host": "attacker.example"})[0], 403)
+
+    def test_requires_json(self):
+        self.assertEqual(self.call("POST", "/api/route", {"task": "x"}, {"Content-Type": "text/plain"})[0], 415)
+
+    def test_claude_path_is_locked(self):
+        status, data = self.call("POST", "/api/config", {"claude_path": "/tmp/evil", "context_budget": 90000})
+        self.assertEqual(status, 200)
+        saved = json.loads(data)
+        self.assertEqual((saved["claude_path"], saved["context_budget"]), ("", 90000))
+
+    def test_bad_numbers_dont_crash(self):
+        self.assertEqual(self.call("GET", "/api/report?days=abc")[0], 400)
