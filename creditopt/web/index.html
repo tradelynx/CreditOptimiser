@@ -269,7 +269,8 @@ details.pledge li { margin: 4px 0; color: var(--ink-2); }
           <div><label for="o-escalate">If the work isn't finished, retry on a stronger model up to</label>
             <select id="o-escalate"><option value="off">Don't retry</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option><option value="fable">Fable (costly)</option></select></div>
           <div><label for="o-access">Access</label>
-            <select id="o-access"><option value="edit">Read and edit files</option><option value="plan">Read only: produce a plan</option></select></div>
+            <select id="o-access"><option value="edit">Read and edit files</option><option value="plan">Read only: produce a plan</option><option value="full">Full access (no permission prompts)</option></select>
+            <p class="note" id="o-access-note" hidden><b>Full access is off by default.</b> When you choose it, Claude Code runs without permission prompts. It can run any command and change anything your account can reach: files, git, deploys and databases, so it will not stop to say it cannot. It is told to start its report with a <b>WARNING DESTRUCTIVE</b> line for deletes, overwrites and force pushes, and to stop and ask before irreversible actions you did not name, production database changes, messages to customers, protected-branch pushes and paid deploys. That is an instruction to the agent, not a technical lock. Use it only in repositories and accounts where you accept the risk.</p></div>
           <div>
             <div class="check"><input type="checkbox" id="o-self_test"><label for="o-self_test">Test its own work (allows only this command, for this run)</label></div>
             <input type="text" id="o-test_command" placeholder="test command" style="margin-top:6px">
@@ -646,6 +647,7 @@ async function preview() {
       ${p.agents.length ? `<div class="agents">${p.agents.map(a => `<div><b><span class="dot" style="background:${color(a.model)}"></span>${esc(a.name)}</b> · ${esc(NAMES[a.model])}<br>${esc(a.description)}</div>`).join("")}</div>` : `<p class="note">None needed.</p>`}
       <ul>${p.strategy.map(w => `<li>${esc(w)}</li>`).join("")}</ul>
       <p class="note">${p.options.access === "plan" ? "Read-only: it will investigate and write a plan, without changing files." :
+        p.options.access === "full" ? "<b>Full access:</b> no permission prompts. It can run any command and change anything your account can reach. It will flag destructive actions with a WARNING DESTRUCTIVE line and stop to ask before irreversible ones." :
         p.test_command ? `It will run <code>${esc(p.test_command)}</code> to check its work.` : "It won't run tests; it will tell you which to run."}
         ${p.escalate_to ? ` If the work isn't finished, it resumes on ${esc(NAMES[p.escalate_to])}.` : " No automatic retry."}</p>
     </div>`;
@@ -754,6 +756,7 @@ function renderPresetButtons() {
 function applyOpts(o) {
   OPTS = { ...o };
   ["model", "priority", "escalate", "access"].forEach(k => $("#o-" + k).value = o[k]);
+  $("#o-access-note").hidden = o.access !== "full";
   $("#o-self_test").checked = o.self_test; $("#o-review").checked = o.review;
   $("#o-test_command").value = o.test_command || "";
   const custom = Array.isArray(o.subagents);
@@ -780,6 +783,7 @@ function markPreset() {
     : (PRESET_INFO[OPTS.preset] || {}).description || "";
 }
 const runOptions = () => ({ ...readOpts(), preset: OPTS.preset === "custom" ? "quality" : OPTS.preset });
+$("#o-access").addEventListener("change", e => { $("#o-access-note").hidden = e.target.value !== "full"; });
 $("#o-subagents").addEventListener("change", e => {
   $("#o-agent-picks").hidden = e.target.value !== "custom";
   if (e.target.value === "custom") $("#o-agent-picks").querySelectorAll("input").forEach(c => c.checked = c.value !== "implementer");
