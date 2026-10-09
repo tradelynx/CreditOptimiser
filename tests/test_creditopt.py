@@ -360,6 +360,30 @@ class RunnerTest(unittest.TestCase):
         fab = runner.plan_run(task, str(self.repo), options={"model": "opus", "escalate": "fable"})
         self.assertEqual(fab["escalate_to"], "fable")
 
+    def test_full_access_is_off_by_default_and_changes_the_command_when_on(self):
+        from creditopt import runner
+        task = "Refactor the parser across the codebase\n- a\n- b\n- c"
+        for preset in runner.PRESETS:
+            self.assertEqual(runner.PRESETS[preset]["access"], "edit")
+        default = runner.plan_run(task, str(self.repo))
+        self.assertEqual(default["permission_mode"], "acceptEdits")
+        self.assertFalse(default["full_access"])
+        self.assertNotIn("WARNING DESTRUCTIVE", default["system_prompt"])
+        full = runner.plan_run(task, str(self.repo), options={"access": "full", "review": True})
+        self.assertEqual(full["permission_mode"], "bypassPermissions")
+        self.assertTrue(full["full_access"] and full["shell_allowed"])
+        for rule in ("WARNING DESTRUCTIVE", "migration", "customers", "protected branch"):
+            self.assertIn(rule, full["system_prompt"])
+        defs = runner.agent_defs(full)
+        self.assertNotIn("tools", defs["implementer"])
+        self.assertIn("tools", defs["reviewer"])
+        self.assertIn("WARNING DESTRUCTIVE", defs["implementer"]["prompt"])
+        cmd = runner.build_command(full, "claude")
+        self.assertEqual(cmd[cmd.index("--permission-mode") + 1], "bypassPermissions")
+        plain = runner.agent_defs(default)
+        self.assertEqual(plain["implementer"]["tools"], runner.AGENT_DEFS["implementer"]["tools"])
+        self.assertEqual(runner.resolve_options({"access": "bogus"})["access"], "edit")
+
     def test_every_preset_has_a_label(self):
         from creditopt import runner
         self.assertEqual(set(runner.PRESETS), set(runner.PRESET_INFO))

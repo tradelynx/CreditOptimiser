@@ -18,6 +18,25 @@ goes. It runs each task on the cheapest setup that will still do it well, and te
 
 ---
 
+## Full access mode (optional, off by default)
+
+By default a run can read and edit files, and shell commands are refused unless your own
+Claude Code settings allow them. If you would rather the agent never stops to say it cannot do
+something, choose **Access: Full access** in the dashboard, or pass `--access full`.
+
+**What it does.** It starts Claude Code with permission prompts off (`bypassPermissions`) and
+gives the helper sub-agents the same tools as the lead (the reviewer stays read-only). The run
+can then execute any command and change anything your account can reach: files, git, deploys
+and databases.
+
+**Guardrails it adds.** The agent is told to open its report with a `WARNING DESTRUCTIVE` line
+for deletes, overwrites and force pushes, to stop and ask before irreversible actions you did
+not name, and always to ask before production database changes, messages to customers or other
+third parties, pushes to protected branches, and paid deploys.
+
+**What it is not.** Those guardrails are instructions to the model, not a technical lock. Use
+this only in repositories and accounts where you accept that risk. No preset turns it on.
+
 ## What it does
 
 - **Usage dashboard.** See your Claude Code usage by day, model, project and session, your
@@ -259,7 +278,7 @@ Everything in the dashboard also works from the terminal:
 |---|---|
 | `python3 -m creditopt serve` | Open the dashboard (`--demo`, `--repo PATH`, `--port N`) |
 | `python3 -m creditopt report` | Usage report and recommendations (`--days N`, `--repo PATH`) |
-| `python3 -m creditopt run "task"` | Run a task (`--repo`, `--preset`, `--model`, `--[no-]self-test`, `--test-command`, `--[no-]review`, `--escalate`, `--access plan`, `--subagents`, `--dry-run`) |
+| `python3 -m creditopt run "task"` | Run a task (`--repo`, `--preset`, `--model`, `--[no-]self-test`, `--test-command`, `--[no-]review`, `--escalate`, `--access plan|edit|full`, `--subagents`, `--dry-run`) |
 | `python3 -m creditopt route "task"` | Just recommend a model |
 | `python3 -m creditopt install` | Install the Claude Code add-ons (`--apply`, `--repo`, `--uninstall`) |
 | `python3 -m creditopt config` | Show settings, or change them with `--set key=value` |

@@ -155,7 +155,7 @@ def main(argv=None):
     rn.add_argument("--test-command", help="test command to allow (default: detected)")
     rn.add_argument("--review", action=argparse.BooleanOptionalAction, default=None, help="have an Opus reviewer check the diff")
     rn.add_argument("--escalate", choices=["off", "sonnet", "opus", "fable"], help="highest model an unfinished run may retry on")
-    rn.add_argument("--access", choices=["plan", "edit"], help="plan = read-only, edit = may edit files")
+    rn.add_argument("--access", choices=["plan", "edit", "full"], help="plan = read-only, edit = may edit files, full = NO permission prompts: may run any command and change anything your account can reach (off unless you choose it)")
     rn.add_argument("--subagents", help="auto, off, or a list like scout,reviewer")
     rn.add_argument("--dry-run", action="store_true", help="show the plan without running")
 

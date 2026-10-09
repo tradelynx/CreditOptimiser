@@ -29,6 +29,7 @@ from pathlib import Path
 from . import config, models, router
 
 PERMISSION_MODE = "acceptEdits"
+FULL_ACCESS_PERMISSION_MODE = "bypassPermissions"
 STATUS_RE = re.compile(r"STATUS:\s*(DONE|UNVERIFIED|INCOMPLETE)\b[\s:—-]*(.*)", re.I)
 
 AGENT_DEFS = {
@@ -72,6 +73,37 @@ AGENT_DEFS = {
         "model": "haiku",
     },
 }
+
+
+# Full access is OFF unless the user picks it. It removes Claude Code's permission
+# prompts for the run, so the agent can run any command and change anything the
+# account can reach (files, git, deploys, databases). These rules go with it.
+FULL_ACCESS_GUARDRAILS = (
+    "Full access run: you may edit files and run any command, and you must not refuse a task "
+    "because of tool or permission limits; use another route if one is blocked. "
+    "Destructive actions are allowed but must be announced. Begin your final message with a line "
+    "`WARNING DESTRUCTIVE: <what, where, reversible or not>` for anything that deletes or "
+    "overwrites data or history (DROP, TRUNCATE, DELETE, rm -rf, force push, reset --hard, "
+    "deleting branches, deployments or environment variables, writes to production). "
+    "Before running anything IRREVERSIBLE that the task did not name, stop and ask instead. "
+    "Always stop and ask before: applying a database migration or schema change to production, "
+    "sending any email, SMS or message to customers or other third parties, merging or pushing "
+    "to a protected branch, triggering a paid deployment, or exposing a secret. "
+    "Never put secrets in source or logs."
+)
+
+
+def agent_defs(plan):
+    """Sub-agent definitions for this run. Full access lifts the helpers' tool limits."""
+    defs = {a["name"]: dict(AGENT_DEFS[a["name"]]) for a in plan["agents"]}
+    if plan["options"].get("access") == "full":
+        for name, d in defs.items():
+            if name == "reviewer":
+                continue  # the reviewer stays independent: it reads and runs git, it doesn't edit
+            d.pop("tools", None)  # no tools key = inherits every tool
+            d["prompt"] = d["prompt"].replace("Don't edit files.", "").strip() + \
+                " " + FULL_ACCESS_GUARDRAILS
+    return defs
 
 
 def shell_allowed(repo, claude_dir=None):
@@ -128,7 +160,7 @@ CHOICES = {
     "priority": ("savings", "balanced", "quality"),
     "model": ("auto", "haiku", "sonnet", "opus", "fable"),
     "escalate": ("off", "sonnet", "opus", "fable"),
-    "access": ("plan", "edit"),
+    "access": ("plan", "edit", "full"),
 }
 SUBAGENTS = ("scout", "implementer", "verifier", "reviewer")
 
@@ -219,11 +251,12 @@ def plan_run(task, repo, model=None, options=None):
     parts = _multi_part(task)
     reasons = set(rec["reasons"])
     plan_only = opts["access"] == "plan"
+    full = opts["access"] == "full"
 
     test_cmd = ""
     if opts["self_test"] and not plan_only:
         test_cmd = opts["test_command"] or detect_test_command(repo)
-    shell = shell_allowed(repo) or bool(test_cmd)
+    shell = full or shell_allowed(repo) or bool(test_cmd)
 
     # Which sub-agents: chosen automatically, switched off, or picked by hand.
     if opts["subagents"] == "off":
@@ -287,13 +320,15 @@ def plan_run(task, repo, model=None, options=None):
         runner_name = "the `verifier` subagent" if "verifier" in agents else "yourself"
         instructions.append(f"After changing code, run `{test_cmd}` ({runner_name}) and fix failures "
                             "your change caused. Report any failures that were already there.")
-    elif not plan_only:
+    elif not plan_only and not full:
         instructions.append("Don't try to run tests or builds: shell commands aren't permitted. Check "
                             "your work by reading it, and list the commands the user should run.")
     if "reviewer" in agents:
         instructions.append("When you think you're done, ask the `reviewer` subagent to review the "
                             "changes (it can run git diff) against the original task. Fix every real "
                             "problem it finds before finishing.")
+    if full:
+        instructions.append(FULL_ACCESS_GUARDRAILS)
     instructions.append("End your final message with exactly one line: `STATUS: DONE` if the task "
                         "is complete and verified, `STATUS: UNVERIFIED: <checks to run>` if it's "
                         "complete but couldn't be checked, or `STATUS: INCOMPLETE: <reason>` if the "
@@ -316,7 +351,8 @@ def plan_run(task, repo, model=None, options=None):
                     "description": AGENT_DEFS[a]["description"]} for a in agents],
         "strategy": why,
         "parts": parts,
-        "permission_mode": "plan" if plan_only else PERMISSION_MODE,
+        "permission_mode": "plan" if plan_only else (FULL_ACCESS_PERMISSION_MODE if full else PERMISSION_MODE),
+        "full_access": full,
         "shell_allowed": shell,
         "test_command": test_cmd,
         "detected_test_command": detect_test_command(repo),
@@ -372,7 +408,7 @@ def build_command(plan, claude, prompt=None, resume=None, model=None):
            "--permission-mode", plan["permission_mode"],
            "--append-system-prompt", plan["system_prompt"]]
     if plan["agents"]:
-        cmd += ["--agents", json.dumps({a["name"]: AGENT_DEFS[a["name"]] for a in plan["agents"]})]
+        cmd += ["--agents", json.dumps(agent_defs(plan))]
     extra = allowed_tools(plan)
     if extra:
         cmd += ["--allowedTools", *extra]
